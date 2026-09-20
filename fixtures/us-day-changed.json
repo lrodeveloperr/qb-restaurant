@@ -1,0 +1,23 @@
+{
+  "schemaVersion": 1,
+  "workspaceId": "ws-us",
+  "realmId": "realm-us",
+  "restaurantId": "restaurant-us",
+  "locationId": "location-us",
+  "businessDate": "2026-09-18",
+  "timezone": "America/New_York",
+  "country": "US",
+  "currency": "USD",
+  "sourceVersion": "toast-close-2",
+  "categories": {
+    "beverage_sales": 20000,
+    "card": 96000,
+    "cash": 20000,
+    "discounts": 3000,
+    "food_sales": 81000,
+    "gift_cards_redeemed": 5000,
+    "gift_cards_sold": 5000,
+    "sales_tax": 8000,
+    "tips": 10000
+  }
+}

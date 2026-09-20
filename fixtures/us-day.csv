@@ -1,0 +1,10 @@
+schema_version,workspace_id,realm_id,restaurant_id,location_id,business_date,timezone,country,currency,source_version,category,amount_cents
+1,ws-us,realm-us,restaurant-us,location-us,2026-09-18,America/New_York,US,USD,toast-close-1,beverage_sales,20000
+1,ws-us,realm-us,restaurant-us,location-us,2026-09-18,America/New_York,US,USD,toast-close-1,card,95000
+1,ws-us,realm-us,restaurant-us,location-us,2026-09-18,America/New_York,US,USD,toast-close-1,cash,20000
+1,ws-us,realm-us,restaurant-us,location-us,2026-09-18,America/New_York,US,USD,toast-close-1,discounts,3000
+1,ws-us,realm-us,restaurant-us,location-us,2026-09-18,America/New_York,US,USD,toast-close-1,food_sales,80000
+1,ws-us,realm-us,restaurant-us,location-us,2026-09-18,America/New_York,US,USD,toast-close-1,gift_cards_redeemed,5000
+1,ws-us,realm-us,restaurant-us,location-us,2026-09-18,America/New_York,US,USD,toast-close-1,gift_cards_sold,5000
+1,ws-us,realm-us,restaurant-us,location-us,2026-09-18,America/New_York,US,USD,toast-close-1,sales_tax,8000
+1,ws-us,realm-us,restaurant-us,location-us,2026-09-18,America/New_York,US,USD,toast-close-1,tips,10000

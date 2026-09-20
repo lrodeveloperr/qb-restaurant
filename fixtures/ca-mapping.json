@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "entries": {
+    "beverage_sales": {"accountId":"income-beverage","accountName":"Ventes de boissons","postingType":"Credit","active":true},
+    "card": {"accountId":"clearing-card","accountName":"Compte d'attente cartes","postingType":"Debit","active":true},
+    "cash": {"accountId":"asset-cash","accountName":"Encaisse","postingType":"Debit","active":true},
+    "discounts": {"accountId":"contra-discounts","accountName":"Rabais","postingType":"Debit","active":true},
+    "food_sales": {"accountId":"income-food","accountName":"Ventes de nourriture","postingType":"Credit","active":true},
+    "gift_cards_redeemed": {"accountId":"liability-gift","accountName":"Cartes-cadeaux à payer","postingType":"Debit","active":true},
+    "gift_cards_sold": {"accountId":"liability-gift","accountName":"Cartes-cadeaux à payer","postingType":"Credit","active":true},
+    "gst": {"accountId":"liability-gst","accountName":"TPS à payer","postingType":"Credit","active":true},
+    "qst": {"accountId":"liability-qst","accountName":"TVQ à payer","postingType":"Credit","active":true},
+    "tips": {"accountId":"liability-tips","accountName":"Pourboires à payer","postingType":"Credit","active":true}
+  }
+}

@@ -1,0 +1,81 @@
+{
+  "schema_version": 1,
+  "candidate_status": "PROVISIONAL",
+  "support_matrix": {
+    "runtime": ["node-24"],
+    "methods": ["CSV_PILOT", "TOAST_DIRECT_PROVISIONAL"],
+    "roles": ["OWNER", "MEMBER"],
+    "locales": ["en-US", "en-CA", "es-US", "fr-CA"],
+    "country_currency": ["US/USD", "CA/CAD"],
+    "entitlements": ["TRIAL", "PAID", "PAYMENT_GRACE", "EXPIRED"]
+  },
+  "performance_budgets": {
+    "single_preview_p95_ms": 250,
+    "dataset_locations": 25,
+    "dataset_days": 730,
+    "dataset_max_ms": 10000,
+    "dataset_max_rss_mib": 256
+  },
+  "simulation": {
+    "seed": 20260920,
+    "property_sequences_per_critical_invariant": 10000,
+    "csv_structured_fuzz_cases": 100000,
+    "date_span_days": 730,
+    "max_locations": 25
+  },
+  "tool_thresholds": {
+    "compiler_or_syntax_warnings": 0,
+    "critical_high_dependency_findings": 0,
+    "critical_high_open_findings": 0,
+    "locale_key_coverage_percent": 100,
+    "mutation_equivalent_sentinel_detection_percent": 80
+  },
+  "external_gates": [
+    {"id":"EXT-TOAST-ACCESS","status":"BLOCKED_EXTERNAL","description":"Approved commercial Toast integration access."},
+    {"id":"EXT-US-FIXTURE","status":"BLOCKED_EXTERNAL","description":"Anonymized real US Toast day and accountant-approved QuickBooks journal."},
+    {"id":"EXT-CA-FIXTURE","status":"BLOCKED_EXTERNAL","description":"Anonymized real Quebec/CAD Toast day with GST/QST and accountant-approved journal."},
+    {"id":"EXT-QB-US-SANDBOX","status":"BLOCKED_EXTERNAL","description":"Successful locked-payload write and recovery test in a US/USD QBO sandbox."},
+    {"id":"EXT-QB-CA-SANDBOX","status":"BLOCKED_EXTERNAL","description":"Successful locked-payload write and recovery test in a CA/CAD QBO sandbox."},
+    {"id":"EXT-INDEPENDENT-REVIEW","status":"BLOCKED_EXTERNAL","description":"Fresh external verifier reviews the immutable candidate bundle."},
+    {"id":"EXT-USER-HARNESS","status":"BLOCKED_EXTERNAL","description":"User completes the normal, failure, correction, billing and locale harness scenarios."}
+  ],
+  "tests": [
+    {"id":"T-JOURNAL-US","requirement_ids":["REQ-SCOPE-001","REQ-JOURNAL-001","REQ-JOURNAL-003"],"platform_matrix":["node-24/en-US/US-USD"],"fixture_ids":["US_DAY","US_MAPPING"],"starting_state":"mapped unposted day","actions":["normalize","preview"],"expected_oracle":"balanced deterministic journal","severity_on_failure":"CRITICAL","automation_status":"AUTOMATED"},
+    {"id":"T-JOURNAL-CA","requirement_ids":["REQ-SCOPE-001","REQ-JOURNAL-001","REQ-JOURNAL-003"],"platform_matrix":["node-24/fr-CA/CA-CAD"],"fixture_ids":["CA_DAY","CA_MAPPING"],"starting_state":"mapped unposted day","actions":["normalize","preview"],"expected_oracle":"balanced CAD journal with GST and QST mappings","severity_on_failure":"CRITICAL","automation_status":"AUTOMATED"},
+    {"id":"T-IDEMPOTENCY","requirement_ids":["REQ-IDEMP-001"],"platform_matrix":["node-24/all-locales"],"fixture_ids":["US_DAY"],"starting_state":"unposted","actions":["post twice"],"expected_oracle":"one external journal","severity_on_failure":"CRITICAL","automation_status":"AUTOMATED"},
+    {"id":"T-TIMEOUT-AFTER-COMMIT","requirement_ids":["REQ-IDEMP-001","REQ-RECOVERY-001"],"platform_matrix":["node-24"],"fixture_ids":["US_DAY"],"starting_state":"unposted","actions":["commit then timeout","query"],"expected_oracle":"posted once","severity_on_failure":"CRITICAL","automation_status":"AUTOMATED"},
+    {"id":"T-CORRECTION","requirement_ids":["REQ-CORRECT-001"],"platform_matrix":["node-24"],"fixture_ids":["US_DAY","US_DAY_CHANGED"],"starting_state":"posted","actions":["ingest change","correct"],"expected_oracle":"one reversal and one replacement","severity_on_failure":"CRITICAL","automation_status":"AUTOMATED"},
+    {"id":"T-EXTERNAL-EDIT","requirement_ids":["REQ-CORRECT-002"],"platform_matrix":["node-24"],"fixture_ids":["US_DAY_CHANGED"],"starting_state":"posted journal externally edited","actions":["correct"],"expected_oracle":"external change block","severity_on_failure":"CRITICAL","automation_status":"AUTOMATED"},
+    {"id":"T-LOCALE-COVERAGE","requirement_ids":["REQ-LOCALE-001"],"platform_matrix":["node-24/all-locales"],"fixture_ids":[],"starting_state":"catalogs loaded","actions":["compare keys and placeholders"],"expected_oracle":"100 percent parity","severity_on_failure":"HIGH","automation_status":"AUTOMATED"},
+    {"id":"T-PROPERTY-BALANCE","requirement_ids":["REQ-JOURNAL-001","REQ-JOURNAL-002"],"platform_matrix":["node-24"],"fixture_ids":["GENERATED"],"starting_state":"seed 20260920","actions":["10000 generated journals"],"expected_oracle":"balanced inputs balance; unbalanced inputs block","severity_on_failure":"CRITICAL","automation_status":"AUTOMATED"},
+    {"id":"T-REALM-ISOLATION","requirement_ids":["REQ-TENANT-001"],"platform_matrix":["node-24/sqlite"],"fixture_ids":[],"starting_state":"realm assigned","actions":["assign same realm again"],"expected_oracle":"conflict","severity_on_failure":"CRITICAL","automation_status":"AUTOMATED"},
+    {"id":"T-LOCATION-UNIQUENESS","requirement_ids":["REQ-TENANT-002"],"platform_matrix":["node-24/sqlite"],"fixture_ids":[],"starting_state":"location assigned","actions":["assign same Toast location elsewhere"],"expected_oracle":"conflict","severity_on_failure":"CRITICAL","automation_status":"AUTOMATED"},
+    {"id":"T-NORMALIZE","requirement_ids":["REQ-INPUT-001"],"platform_matrix":["node-24"],"fixture_ids":["US_DAY"],"starting_state":"raw input","actions":["normalize"],"expected_oracle":"frozen deterministic canonical source","severity_on_failure":"CRITICAL","automation_status":"AUTOMATED"},
+    {"id":"T-MALFORMED","requirement_ids":["REQ-INPUT-001"],"platform_matrix":["node-24"],"fixture_ids":["MALFORMED"],"starting_state":"invalid source","actions":["normalize"],"expected_oracle":"fail closed","severity_on_failure":"CRITICAL","automation_status":"AUTOMATED"},
+    {"id":"T-CURRENCY","requirement_ids":["REQ-INPUT-002"],"platform_matrix":["node-24"],"fixture_ids":["CA_DAY"],"starting_state":"crossed pair","actions":["normalize"],"expected_oracle":"unsupported pair","severity_on_failure":"HIGH","automation_status":"AUTOMATED"},
+    {"id":"T-CSV","requirement_ids":["REQ-INPUT-003"],"platform_matrix":["node-24"],"fixture_ids":["US_CSV"],"starting_state":"schema v1 file","actions":["parse","serialize","parse"],"expected_oracle":"same canonical source","severity_on_failure":"HIGH","automation_status":"AUTOMATED"},
+    {"id":"T-CSV-LIMITS","requirement_ids":["REQ-INPUT-003"],"platform_matrix":["node-24"],"fixture_ids":["GENERATED"],"starting_state":"invalid header or oversize","actions":["parse"],"expected_oracle":"reject","severity_on_failure":"HIGH","automation_status":"AUTOMATED"},
+    {"id":"T-CSV-FUZZ","requirement_ids":["REQ-INPUT-003"],"platform_matrix":["node-24"],"fixture_ids":["GENERATED_100K"],"starting_state":"seed 20260920","actions":["structured parse cases"],"expected_oracle":"all expected accepts and rejects","severity_on_failure":"HIGH","automation_status":"AUTOMATED"},
+    {"id":"T-TOAST-CONTRACT","requirement_ids":["REQ-TOAST-001"],"platform_matrix":["production Toast US and CA"],"fixture_ids":[],"starting_state":"commercial access unavailable","actions":["contract verification"],"expected_oracle":"real finalized fields","severity_on_failure":"CRITICAL","automation_status":"BLOCKED_EXTERNAL"},
+    {"id":"T-UNMAPPED","requirement_ids":["REQ-MAP-001"],"platform_matrix":["node-24"],"fixture_ids":["US_DAY"],"starting_state":"missing tips mapping","actions":["preview"],"expected_oracle":"block","severity_on_failure":"CRITICAL","automation_status":"AUTOMATED"},
+    {"id":"T-MAPPING-VERSION","requirement_ids":["REQ-MAP-001"],"platform_matrix":["node-24/sqlite"],"fixture_ids":["US_MAPPING"],"starting_state":"preview at v1","actions":["approve v2"],"expected_oracle":"original remains v1","severity_on_failure":"CRITICAL","automation_status":"AUTOMATED"},
+    {"id":"T-UNBALANCED","requirement_ids":["REQ-JOURNAL-001","REQ-JOURNAL-002"],"platform_matrix":["node-24"],"fixture_ids":["US_DAY"],"starting_state":"one-cent imbalance","actions":["preview"],"expected_oracle":"block without plug","severity_on_failure":"CRITICAL","automation_status":"AUTOMATED"},
+    {"id":"T-QB-CONTRACT","requirement_ids":["REQ-QB-001"],"platform_matrix":["QBO US","QBO CA"],"fixture_ids":[],"starting_state":"sandbox credentials unavailable","actions":["write locked payload"],"expected_oracle":"accepted and queryable","severity_on_failure":"CRITICAL","automation_status":"BLOCKED_EXTERNAL"},
+    {"id":"T-PROPERTY-IDEMPOTENCY","requirement_ids":["REQ-IDEMP-001"],"platform_matrix":["node-24"],"fixture_ids":["GENERATED"],"starting_state":"28 dates","actions":["post each ten times"],"expected_oracle":"28 external writes","severity_on_failure":"CRITICAL","automation_status":"AUTOMATED"},
+    {"id":"T-REFERENCE","requirement_ids":["REQ-IDEMP-002"],"platform_matrix":["node-24"],"fixture_ids":[],"starting_state":"long scope IDs","actions":["make reference"],"expected_oracle":"deterministic 21 chars","severity_on_failure":"HIGH","automation_status":"AUTOMATED"},
+    {"id":"T-POSSIBLE-DUPLICATE","requirement_ids":["REQ-DUP-001"],"platform_matrix":["node-24"],"fixture_ids":["US_DAY"],"starting_state":"equivalent manual journal","actions":["post","dismiss","post"],"expected_oracle":"block then one new write","severity_on_failure":"CRITICAL","automation_status":"AUTOMATED"},
+    {"id":"T-TIMEOUT-BEFORE-COMMIT","requirement_ids":["REQ-RECOVERY-001"],"platform_matrix":["node-24"],"fixture_ids":["US_DAY"],"starting_state":"unposted","actions":["timeout before commit","query","retry"],"expected_oracle":"one journal","severity_on_failure":"CRITICAL","automation_status":"AUTOMATED"},
+    {"id":"T-CORRECTION-RESUME","requirement_ids":["REQ-CORRECT-001"],"platform_matrix":["node-24/sqlite"],"fixture_ids":["US_DAY_CHANGED"],"starting_state":"reversal committed","actions":["replacement timeout","resume"],"expected_oracle":"one reversal and one replacement","severity_on_failure":"CRITICAL","automation_status":"AUTOMATED"},
+    {"id":"T-EXTERNAL-DELETE","requirement_ids":["REQ-CORRECT-002"],"platform_matrix":["node-24"],"fixture_ids":["US_DAY_CHANGED"],"starting_state":"original deleted","actions":["correct"],"expected_oracle":"external change block","severity_on_failure":"CRITICAL","automation_status":"AUTOMATED"},
+    {"id":"T-STATE-MACHINE","requirement_ids":["REQ-STATE-001"],"platform_matrix":["node-24"],"fixture_ids":[],"starting_state":"posted","actions":["illegal transition"],"expected_oracle":"fail closed","severity_on_failure":"CRITICAL","automation_status":"AUTOMATED"},
+    {"id":"T-PROPERTY-STATES","requirement_ids":["REQ-STATE-001"],"platform_matrix":["node-24"],"fixture_ids":["GENERATED_10K"],"starting_state":"all states","actions":["generated transitions"],"expected_oracle":"only allowlisted transitions","severity_on_failure":"CRITICAL","automation_status":"AUTOMATED"},
+    {"id":"T-TRIAL","requirement_ids":["REQ-BILL-001"],"platform_matrix":["node-24"],"fixture_ids":[],"starting_state":"trial start","actions":["evaluate boundaries"],"expected_oracle":"14 days, no conversion","severity_on_failure":"HIGH","automation_status":"AUTOMATED"},
+    {"id":"T-PAUSE-CANCEL","requirement_ids":["REQ-BILL-002"],"platform_matrix":["node-24"],"fixture_ids":[],"starting_state":"paid","actions":["pause","quote"],"expected_oracle":"sync blocked; renewal rule retained","severity_on_failure":"HIGH","automation_status":"AUTOMATED"},
+    {"id":"T-PAYMENT-GRACE","requirement_ids":["REQ-BILL-003"],"platform_matrix":["node-24"],"fixture_ids":[],"starting_state":"payment failed","actions":["evaluate boundaries"],"expected_oracle":"seven-day grace","severity_on_failure":"HIGH","automation_status":"AUTOMATED"},
+    {"id":"T-LOCALE-IMMUTABILITY","requirement_ids":["REQ-LOCALE-002"],"platform_matrix":["node-24/all-locales"],"fixture_ids":["CA_DAY"],"starting_state":"preview","actions":["render three locales"],"expected_oracle":"accounting bytes unchanged","severity_on_failure":"CRITICAL","automation_status":"AUTOMATED"},
+    {"id":"T-PERSISTENCE-RESTART","requirement_ids":["REQ-DATA-001"],"platform_matrix":["node-24/sqlite"],"fixture_ids":["US_DAY"],"starting_state":"posted","actions":["close","reopen","post"],"expected_oracle":"one external write","severity_on_failure":"CRITICAL","automation_status":"AUTOMATED"},
+    {"id":"T-DELETION","requirement_ids":["REQ-DATA-002"],"platform_matrix":["node-24/sqlite"],"fixture_ids":[],"starting_state":"active workspace","actions":["delete"],"expected_oracle":"revoke before purge","severity_on_failure":"CRITICAL","automation_status":"AUTOMATED"},
+    {"id":"T-EXPORT","requirement_ids":["REQ-EXPORT-001"],"platform_matrix":["node-24"],"fixture_ids":[],"starting_state":"register row with formula prefix","actions":["export CSV"],"expected_oracle":"one neutral safe row","severity_on_failure":"HIGH","automation_status":"AUTOMATED"},
+    {"id":"T-PERFORMANCE","requirement_ids":["REQ-PERF-001"],"platform_matrix":["node-24"],"fixture_ids":["GENERATED_25X730"],"starting_state":"empty","actions":["normalize and preview"],"expected_oracle":"under locked time and memory budgets","severity_on_failure":"HIGH","automation_status":"AUTOMATED"}
+  ]
+}

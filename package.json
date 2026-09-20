@@ -1,0 +1,22 @@
+{
+  "name": "restaurant-sales-sync-for-quickbooks",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Deterministic Toast-to-QuickBooks daily sales journal engine and diagnostic harness.",
+  "engines": {
+    "node": ">=24.0.0"
+  },
+  "scripts": {
+    "demo": "node src/harness/cli.js run normal-us",
+    "harness": "node src/harness/cli.js",
+    "test": "node --test --test-concurrency=1",
+    "test:coverage": "node --test --test-concurrency=1 --experimental-test-coverage",
+    "check": "node scripts/validate-project.js",
+    "fuzz": "node scripts/fuzz-csv.js",
+    "mutation": "node scripts/mutation-sentinels.js",
+    "benchmark": "node --expose-gc --max-old-space-size=192 scripts/benchmark.js",
+    "gate": "node scripts/release-gate.js"
+  },
+  "license": "UNLICENSED"
+}

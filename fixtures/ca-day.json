@@ -1,0 +1,24 @@
+{
+  "schemaVersion": 1,
+  "workspaceId": "ws-ca",
+  "realmId": "realm-ca",
+  "restaurantId": "restaurant-ca",
+  "locationId": "location-ca",
+  "businessDate": "2026-09-18",
+  "timezone": "America/Toronto",
+  "country": "CA",
+  "currency": "CAD",
+  "sourceVersion": "toast-close-1",
+  "categories": {
+    "beverage_sales": 25000,
+    "card": 122719,
+    "cash": 30000,
+    "discounts": 5000,
+    "food_sales": 100000,
+    "gift_cards_redeemed": 4000,
+    "gift_cards_sold": 3000,
+    "gst": 6250,
+    "qst": 12469,
+    "tips": 15000
+  }
+}

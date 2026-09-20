@@ -1,0 +1,94 @@
+{
+  "schemaVersion": 1,
+  "generatedAt": "2026-09-20T16:27:07.579Z",
+  "candidateStatus": "PROVISIONAL",
+  "automatedChecksPassed": true,
+  "externalGatesPassed": false,
+  "results": [
+    {
+      "name": "contract-and-syntax",
+      "passed": true,
+      "exitCode": 0,
+      "stdout": "> restaurant-sales-sync-for-quickbooks@0.1.0 check\n> node scripts/validate-project.js\n\n{\n  \"ok\": true,\n  \"requirementCount\": 28,\n  \"testRecordCount\": 37,\n  \"externalGateCount\": 7,\n  \"localeCoveragePercent\": 100,\n  \"findings\": []\n}",
+      "stderr": "npm warn Unknown env config \"http-proxy\". This will stop working in the next major version of npm."
+    },
+    {
+      "name": "tests",
+      "passed": true,
+      "exitCode": 0,
+      "stdout": "> restaurant-sales-sync-for-quickbooks@0.1.0 test\n> node --test --test-concurrency=1\n\n✔ T-NORMALIZE: canonical input is sorted, frozen, and fingerprinted (14.6708ms)\n✔ T-MALFORMED: malformed money and dates fail closed (0.730783ms)\n✔ T-CURRENCY: unsupported or crossed market pairs are rejected (0.30535ms)\n✔ T-JOURNAL-US: US source produces an exact balanced deterministic journal (1.121341ms)\n✔ T-JOURNAL-CA: Quebec source preserves supplied GST and QST totals (0.572424ms)\n✔ T-UNMAPPED: every non-zero category needs an explicit mapping (0.469949ms)\n✔ T-UNBALANCED: the engine never inserts a plug line (0.537421ms)\n✔ T-REFERENCE: stable QuickBooks references remain within 21 characters (0.299441ms)\n✔ T-CSV: fixed CSV schema round-trips the pilot fixture (1.374474ms)\n✔ T-CSV-LIMITS: changed headers and oversized files reject (4.124412ms)\n✔ T-STATE-MACHINE: illegal state transitions fail closed (0.224479ms)\n✔ T-PROPERTY-BALANCE: 10000 generated balanced journals retain cent equality (835.599471ms)\n✔ T-PROPERTY-STATES: invalid random transitions are never accepted (54.580846ms)\n✔ T-REALM-ISOLATION and T-LOCATION-UNIQUENESS: persistence constraints isolate scopes (2.17427ms)\n✔ T-IDEMPOTENCY: posting the same day twice creates one external journal (18.081877ms)\n✔ T-PROPERTY-IDEMPOTENCY: repeated commands across generated dates remain one-write (47.241134ms)\n✔ T-TIMEOUT-AFTER-COMMIT: timeout recovery finds committed journal before retry (2.013677ms)\n✔ T-TIMEOUT-BEFORE-COMMIT: missing stable reference returns to safe review (1.820937ms)\n✔ T-POSSIBLE-DUPLICATE: equivalent unreferenced journal blocks until dismissed (2.116413ms)\n✔ T-POSSIBLE-DUPLICATE: an unrelated journal cannot be adopted (2.956811ms)\n✔ T-PAUSE-CANCEL: a location pause blocks posting without deleting its preview (1.19365ms)\n✔ T-CORRECTION: changed posted data produces one reversal and replacement (3.328121ms)\n✔ T-CORRECTION-RESUME: replacement failure resumes without a second reversal (3.941736ms)\n✔ T-CORRECTION: later source revisions use new correction references (4.353537ms)\n✔ T-EXTERNAL-EDIT: edited original blocks automatic correction (2.512701ms)\n✔ T-EXTERNAL-DELETE: deleted original blocks automatic correction (1.945074ms)\n✔ T-MAPPING-VERSION: approved mapping revisions never rewrite the original preview (1.535296ms)\n✔ T-QB-CONTRACT and T-TOAST-CONTRACT: production adapters remain explicitly external-gated (0.434486ms)\n✔ test/helpers.js (61.401635ms)\n✔ T-TRIAL: no-card trial lasts exactly 14 days and does not auto-convert (2.236754ms)\n✔ T-PAUSE-CANCEL: pause blocks sync while location pricing follows locked renewal rules (0.190387ms)\n✔ T-PAYMENT-GRACE: failed payment allows seven days then blocks new writes (0.272331ms)\n✔ T-LOCALE-COVERAGE: all four catalogs have key and placeholder parity (1.250056ms)\n✔ T-LOCALE-IMMUTABILITY: changing display locale cannot mutate accounting data (16.469885ms)\n✔ T-PERSISTENCE-RESTART: durable posting state prevents a duplicate after restart (4.515782ms)\n✔ T-DELETION: external credentials revoke before primary data purge (1.186911ms)\n✔ T-EXPORT: register is locale-neutral and formula-safe (0.515818ms)\n✔ T-ROLES: member privileges are narrow and last owner cannot leave (0.646265ms)\nℹ tests 38\nℹ suites 0\nℹ pass 38\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 1437.505723",
+      "stderr": "npm warn Unknown env config \"http-proxy\". This will stop working in the next major version of npm."
+    },
+    {
+      "name": "mutation-sentinels",
+      "passed": true,
+      "exitCode": 0,
+      "stdout": "> restaurant-sales-sync-for-quickbooks@0.1.0 mutation\n> node scripts/mutation-sentinels.js\n\n{\n  \"ok\": true,\n  \"total\": 10,\n  \"detected\": 10,\n  \"detectionPercent\": 100,\n  \"thresholdPercent\": 80,\n  \"outcomes\": [\n    {\n      \"name\": \"balance-comparison\",\n      \"detected\": true\n    },\n    {\n      \"name\": \"unmapped-guard\",\n      \"detected\": true\n    },\n    {\n      \"name\": \"negative-money\",\n      \"detected\": true\n    },\n    {\n      \"name\": \"country-currency\",\n      \"detected\": true\n    },\n    {\n      \"name\": \"transition-guard\",\n      \"detected\": true\n    },\n    {\n      \"name\": \"timeout-recovery\",\n      \"detected\": true\n    },\n    {\n      \"name\": \"external-change\",\n      \"detected\": true\n    },\n    {\n      \"name\": \"trial-boundary\",\n      \"detected\": true\n    },\n    {\n      \"name\": \"grace-boundary\",\n      \"detected\": true\n    },\n    {\n      \"name\": \"formula-escape\",\n      \"detected\": true\n    }\n  ]\n}",
+      "stderr": "npm warn Unknown env config \"http-proxy\". This will stop working in the next major version of npm."
+    },
+    {
+      "name": "csv-fuzz",
+      "passed": true,
+      "exitCode": 0,
+      "stdout": "> restaurant-sales-sync-for-quickbooks@0.1.0 fuzz\n> node scripts/fuzz-csv.js\n\n{\n  \"ok\": true,\n  \"seed\": 20260920,\n  \"total\": 100000,\n  \"acceptedExpected\": 10132,\n  \"rejectedExpected\": 89868,\n  \"oracleFailures\": 0\n}",
+      "stderr": "npm warn Unknown env config \"http-proxy\". This will stop working in the next major version of npm."
+    },
+    {
+      "name": "performance",
+      "passed": true,
+      "exitCode": 0,
+      "stdout": "> restaurant-sales-sync-for-quickbooks@0.1.0 benchmark\n> node --expose-gc --max-old-space-size=192 scripts/benchmark.js\n\n{\n  \"ok\": true,\n  \"locations\": 25,\n  \"days\": 730,\n  \"previews\": 18250,\n  \"checksum\": 244749986,\n  \"durationMs\": 2020.72,\n  \"rssMiB\": 89.05,\n  \"budgets\": {\n    \"durationMs\": 10000,\n    \"rssMiB\": 256\n  }\n}",
+      "stderr": "npm warn Unknown env config \"http-proxy\". This will stop working in the next major version of npm."
+    },
+    {
+      "name": "dependency-tree",
+      "passed": true,
+      "exitCode": 0,
+      "stdout": "{\n  \"version\": \"0.1.0\",\n  \"name\": \"restaurant-sales-sync-for-quickbooks\"\n}",
+      "stderr": "npm warn Unknown env config \"http-proxy\". This will stop working in the next major version of npm."
+    },
+    {
+      "name": "secret-scan",
+      "passed": true,
+      "findings": []
+    }
+  ],
+  "externalGates": [
+    {
+      "id": "EXT-TOAST-ACCESS",
+      "status": "BLOCKED_EXTERNAL",
+      "description": "Approved commercial Toast integration access."
+    },
+    {
+      "id": "EXT-US-FIXTURE",
+      "status": "BLOCKED_EXTERNAL",
+      "description": "Anonymized real US Toast day and accountant-approved QuickBooks journal."
+    },
+    {
+      "id": "EXT-CA-FIXTURE",
+      "status": "BLOCKED_EXTERNAL",
+      "description": "Anonymized real Quebec/CAD Toast day with GST/QST and accountant-approved journal."
+    },
+    {
+      "id": "EXT-QB-US-SANDBOX",
+      "status": "BLOCKED_EXTERNAL",
+      "description": "Successful locked-payload write and recovery test in a US/USD QBO sandbox."
+    },
+    {
+      "id": "EXT-QB-CA-SANDBOX",
+      "status": "BLOCKED_EXTERNAL",
+      "description": "Successful locked-payload write and recovery test in a CA/CAD QBO sandbox."
+    },
+    {
+      "id": "EXT-INDEPENDENT-REVIEW",
+      "status": "BLOCKED_EXTERNAL",
+      "description": "Fresh external verifier reviews the immutable candidate bundle."
+    },
+    {
+      "id": "EXT-USER-HARNESS",
+      "status": "BLOCKED_EXTERNAL",
+      "description": "User completes the normal, failure, correction, billing and locale harness scenarios."
+    }
+  ],
+  "verdict": "PROVISIONAL"
+}

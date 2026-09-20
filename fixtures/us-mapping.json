@@ -1,0 +1,14 @@
+{
+  "version": 1,
+  "entries": {
+    "beverage_sales": {"accountId":"income-beverage","accountName":"Beverage Sales","postingType":"Credit","active":true},
+    "card": {"accountId":"clearing-card","accountName":"Card Clearing","postingType":"Debit","active":true},
+    "cash": {"accountId":"asset-cash","accountName":"Cash","postingType":"Debit","active":true},
+    "discounts": {"accountId":"contra-discounts","accountName":"Discounts","postingType":"Debit","active":true},
+    "food_sales": {"accountId":"income-food","accountName":"Food Sales","postingType":"Credit","active":true},
+    "gift_cards_redeemed": {"accountId":"liability-gift","accountName":"Gift Card Liability","postingType":"Debit","active":true},
+    "gift_cards_sold": {"accountId":"liability-gift","accountName":"Gift Card Liability","postingType":"Credit","active":true},
+    "sales_tax": {"accountId":"liability-tax","accountName":"Sales Tax Payable","postingType":"Credit","active":true},
+    "tips": {"accountId":"liability-tips","accountName":"Tips Payable","postingType":"Credit","active":true}
+  }
+}
