@@ -7,6 +7,7 @@ import { buildJournal } from '../src/domain/journal.js';
 import { makeDocNumber, makeScopeHash } from '../src/domain/reference.js';
 import { assertTransition, DayStatus } from '../src/domain/state-machine.js';
 import { parseCsvSource, toCsvSource, MAX_CSV_BYTES } from '../src/adapters/csv.js';
+import { importRestaurantCsv } from '../src/adapters/restaurant-csv.js';
 import { SqliteStore } from '../src/persistence/sqlite-store.js';
 import { fixture, setup } from './helpers.js';
 
@@ -75,7 +76,7 @@ test('T-REFERENCE: stable QuickBooks references remain within 21 characters', ()
   assert.match(ref, /^RSQ[A-F0-9]{8}2026091802$/);
 });
 
-test('T-CSV: fixed CSV schema round-trips the pilot fixture', () => {
+test('T-CSV: fixed internal CSV schema round-trips the interchange fixture', () => {
   const input = readFileSync(join(process.cwd(), 'fixtures', 'us-day.csv'));
   const parsed = parseCsvSource(input);
   const reparsed = parseCsvSource(toCsvSource(parsed));
@@ -108,6 +109,47 @@ test('T-CSV-STRICT: trailing characters after a quoted field fail closed', () =>
   const valid = readFileSync(join(process.cwd(), 'fixtures', 'us-day.csv'), 'utf8');
   assert.throws(() => parseCsvSource(valid.replace('toast-close-1', '"toast-close-1"garbage')), { code: 'MALFORMED_CSV' });
   assert.throws(() => parseCsvSource(valid.replace('toast-close-1', 'toast"close-1')), { code: 'MALFORMED_CSV' });
+});
+
+test('T-CSV-RESTAURANT: a saved profile converts a Toast-style daily summary without guessing', () => {
+  const csv = readFileSync(join(process.cwd(), 'fixtures', 'toast-summary-us.csv'));
+  const profile = fixture('toast-summary-profile-us.json');
+  const [source] = importRestaurantCsv(csv, profile, {
+    workspaceId: 'workspace-us', realmId: 'realm-us', restaurantId: 'restaurant-us', locationId: 'location-us',
+    sourceLocationLabel: 'WorksBien Test Restaurant', timezone: 'America/New_York', country: 'US', currency: 'USD',
+  });
+  assert.equal(source.businessDate, '2026-09-18');
+  assert.equal(source.categories.discounts, 5000);
+  assert.equal(source.categories.card, 100000);
+  assert.equal(buildJournal(source, fixture('us-mapping.json')).totals.debitCents, 128000);
+});
+
+test('T-CSV-RESTAURANT: schema, location, sign and money changes fail closed', () => {
+  const csv = readFileSync(join(process.cwd(), 'fixtures', 'toast-summary-us.csv'), 'utf8');
+  const profile = fixture('toast-summary-profile-us.json');
+  const context = {
+    workspaceId: 'workspace-us', realmId: 'realm-us', restaurantId: 'restaurant-us', locationId: 'location-us',
+    sourceLocationLabel: 'WorksBien Test Restaurant', timezone: 'America/New_York', country: 'US', currency: 'USD',
+  };
+  assert.throws(() => importRestaurantCsv(csv.replace('Food Sales', 'Net Sales'), profile, context), { code: 'INVALID_CSV_HEADER' });
+  assert.throws(() => importRestaurantCsv(csv.replace('WorksBien Test Restaurant', 'Wrong Location'), profile, context), { code: 'CSV_LOCATION_MISMATCH' });
+  assert.throws(() => importRestaurantCsv(csv.replace('-50.00', '50.00'), profile, context), { code: 'UNEXPECTED_CSV_SIGN' });
+  assert.throws(() => importRestaurantCsv(csv.replace('800.00', '800.001'), profile, context), { code: 'INVALID_CSV_MONEY' });
+});
+
+test('T-CSV-RESTAURANT: changing one row in a multi-day file does not revise unchanged days', () => {
+  const header = 'Business Date,Location,Food Sales,Beverage Sales,Discounts,Sales Tax,Tips,Cash,Card\n';
+  const first = `${header}09/18/2026,WorksBien Test Restaurant,800.00,300.00,-50.00,80.00,100.00,230.00,1000.00\n09/19/2026,WorksBien Test Restaurant,900.00,300.00,-50.00,90.00,100.00,240.00,1100.00\n`;
+  const second = first.replace('900.00,300.00', '901.00,300.00');
+  const profile = fixture('toast-summary-profile-us.json');
+  const context = {
+    workspaceId: 'workspace-us', realmId: 'realm-us', restaurantId: 'restaurant-us', locationId: 'location-us',
+    sourceLocationLabel: 'WorksBien Test Restaurant', timezone: 'America/New_York', country: 'US', currency: 'USD',
+  };
+  const firstImport = importRestaurantCsv(first, profile, context);
+  const secondImport = importRestaurantCsv(second, profile, context);
+  assert.equal(firstImport[0].sourceVersion, secondImport[0].sourceVersion);
+  assert.notEqual(firstImport[1].sourceVersion, secondImport[1].sourceVersion);
 });
 
 test('T-STATE-MACHINE: illegal state transitions fail closed', () => {
@@ -144,9 +186,9 @@ test('T-REALM-ISOLATION and T-LOCATION-UNIQUENESS: persistence constraints isola
   const { store, source } = setup();
   assert.throws(() => store.createWorkspace({ id: 'other', realmId: source.realmId, country: 'US', currency: 'USD' }), { code: 'WORKSPACE_CONFLICT' });
   store.createWorkspace({ id: 'other', realmId: 'other-realm', country: 'US', currency: 'USD' });
-  assert.throws(() => store.createLocation({ id: 'other-location', workspaceId: 'other', toastLocationId: `toast-${source.locationId}`, timezone: source.timezone }), { code: 'LOCATION_CONFLICT' });
+  assert.throws(() => store.createLocation({ id: 'other-location', workspaceId: 'other', sourceLocationKey: `csv-${source.locationId}`, timezone: source.timezone }), { code: 'LOCATION_CONFLICT' });
   store.setLocationActive(source.locationId, false);
-  assert.equal(store.createLocation({ id: 'other-location', workspaceId: 'other', toastLocationId: `toast-${source.locationId}`, timezone: source.timezone }).workspaceId, 'other');
+  assert.equal(store.createLocation({ id: 'other-location', workspaceId: 'other', sourceLocationKey: `csv-${source.locationId}`, timezone: source.timezone }).workspaceId, 'other');
   store.close();
 });
 
@@ -154,9 +196,9 @@ test('T-REFERENCE-SCOPE: a known 32-bit location hash collision is rejected at s
   assert.equal(makeScopeHash('collision-realm', 'location-60347'), makeScopeHash('collision-realm', 'location-73525'));
   const store = new SqliteStore();
   store.createWorkspace({ id: 'collision-workspace', realmId: 'collision-realm', country: 'US', currency: 'USD' });
-  store.createLocation({ id: 'location-60347', workspaceId: 'collision-workspace', toastLocationId: 'toast-a', timezone: 'America/New_York' });
+  store.createLocation({ id: 'location-60347', workspaceId: 'collision-workspace', sourceLocationKey: 'csv-a', timezone: 'America/New_York' });
   assert.throws(() => store.createLocation({
-    id: 'location-73525', workspaceId: 'collision-workspace', toastLocationId: 'toast-b', timezone: 'America/New_York',
+    id: 'location-73525', workspaceId: 'collision-workspace', sourceLocationKey: 'csv-b', timezone: 'America/New_York',
   }), { code: 'REFERENCE_SCOPE_CONFLICT' });
   store.close();
 });

@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { EntitlementStatus, evaluateEntitlement, pauseSync, startTrial } from '../src/billing/entitlements.js';
+import { EntitlementStatus, evaluateEntitlement, pausePosting, startTrial } from '../src/billing/entitlements.js';
 import { quoteActiveLocations } from '../src/billing/subscription.js';
 import { exportDaysCsv, exportDaysJson } from '../src/domain/export.js';
 import { authorize, assertOwnerRemovalAllowed } from '../src/domain/roles.js';
@@ -19,7 +19,7 @@ import { buildJournal } from '../src/domain/journal.js';
 import { fixture, setup } from './helpers.js';
 
 test('T-TRIAL: no-card trial lasts exactly 14 days and does not auto-convert', () => {
-  const trial = startTrial({ status: EntitlementStatus.NOT_STARTED, syncPaused: false }, '2026-09-01T00:00:00.000Z');
+  const trial = startTrial({ status: EntitlementStatus.NOT_STARTED, postingPaused: false }, '2026-09-01T00:00:00.000Z');
   assert.equal(evaluateEntitlement(trial, '2026-09-14T23:59:59.999Z').canPost, true);
   const ended = evaluateEntitlement(trial, '2026-09-15T00:00:00.000Z');
   assert.equal(ended.canPost, false);
@@ -27,9 +27,9 @@ test('T-TRIAL: no-card trial lasts exactly 14 days and does not auto-convert', (
   assert.equal(trial.status, EntitlementStatus.TRIAL);
 });
 
-test('T-PAUSE-CANCEL: pause blocks sync while location pricing follows locked renewal rules', () => {
-  const paid = { status: EntitlementStatus.PAID, syncPaused: false };
-  assert.equal(evaluateEntitlement(pauseSync(paid), '2026-09-20T00:00:00.000Z').reason, 'SYNC_PAUSED');
+test('T-PAUSE-CANCEL: pause blocks posting while location pricing follows locked renewal rules', () => {
+  const paid = { status: EntitlementStatus.PAID, postingPaused: false };
+  assert.equal(evaluateEntitlement(pausePosting(paid), '2026-09-20T00:00:00.000Z').reason, 'POSTING_PAUSED');
   const quote = quoteActiveLocations({ currency: 'USD', activeLocations: 2, addedLocations: 1 });
   assert.equal(quote.unitPriceCents, 2900);
   assert.equal(quote.renewalTotalCents, 8700);
@@ -37,7 +37,7 @@ test('T-PAUSE-CANCEL: pause blocks sync while location pricing follows locked re
 });
 
 test('T-PAYMENT-GRACE: failed payment allows seven days then blocks new writes', () => {
-  const grace = { status: EntitlementStatus.PAYMENT_GRACE, paymentFailedAt: '2026-09-01T00:00:00.000Z', syncPaused: false };
+  const grace = { status: EntitlementStatus.PAYMENT_GRACE, paymentFailedAt: '2026-09-01T00:00:00.000Z', postingPaused: false };
   assert.equal(evaluateEntitlement(grace, '2026-09-07T23:59:59.999Z').canPost, true);
   assert.equal(evaluateEntitlement(grace, '2026-09-08T00:00:00.000Z').canPost, false);
 });
@@ -59,7 +59,7 @@ test('T-LOCALE-IMMUTABILITY: changing display locale cannot mutate accounting da
   store.close();
 });
 
-test('T-PERSISTENCE-RESTART: durable posting state prevents a duplicate after restart', () => {
+test('T-PERSISTENCE-RESTART: durable posting state prevents a duplicate after restart', async () => {
   const directory = mkdtempSync(join(tmpdir(), 'rsq-test-'));
   const database = join(directory, 'state.sqlite');
   const source = fixture('us-day.json');
@@ -67,22 +67,22 @@ test('T-PERSISTENCE-RESTART: durable posting state prevents a duplicate after re
   const quickBooks = new FakeQuickBooks();
   let store = new SqliteStore(database);
   store.createWorkspace({ id: source.workspaceId, realmId: source.realmId, country: source.country, currency: source.currency });
-  store.createLocation({ id: source.locationId, workspaceId: source.workspaceId, toastLocationId: 'toast-restart', timezone: source.timezone });
+  store.createLocation({ id: source.locationId, workspaceId: source.workspaceId, sourceLocationKey: 'csv-restart', timezone: source.timezone });
   store.saveMapping(source.locationId, mapping);
-  store.putEntitlement(source.workspaceId, { status: 'PAID', syncPaused: false });
+  store.putEntitlement(source.workspaceId, { status: 'PAID', postingPaused: false });
   let engine = new SyncEngine({ store, quickBooks });
   const id = engine.ingest(source).id;
-  engine.post(id);
+  await engine.post(id);
   store.close();
   store = new SqliteStore(database);
   engine = new SyncEngine({ store, quickBooks });
-  assert.equal(engine.post(id).status, 'POSTED');
+  assert.equal((await engine.post(id)).status, 'POSTED');
   assert.equal(quickBooks.writeCount, 1);
   store.close();
   rmSync(directory, { recursive: true });
 });
 
-test('T-INTERRUPTED-WRITE: startup reconciles a committed POSTING row without another write', () => {
+test('T-INTERRUPTED-WRITE: startup reconciles a committed POSTING row without another write', async () => {
   const directory = mkdtempSync(join(tmpdir(), 'rsq-interrupted-'));
   const database = join(directory, 'state.sqlite');
   const source = fixture('us-day.json');
@@ -90,9 +90,9 @@ test('T-INTERRUPTED-WRITE: startup reconciles a committed POSTING row without an
   const quickBooks = new FakeQuickBooks();
   let store = new SqliteStore(database);
   store.createWorkspace({ id: source.workspaceId, realmId: source.realmId, country: source.country, currency: source.currency });
-  store.createLocation({ id: source.locationId, workspaceId: source.workspaceId, toastLocationId: 'toast-interrupted', timezone: source.timezone });
+  store.createLocation({ id: source.locationId, workspaceId: source.workspaceId, sourceLocationKey: 'csv-interrupted', timezone: source.timezone });
   store.saveMapping(source.locationId, mapping);
-  store.putEntitlement(source.workspaceId, { status: 'PAID', syncPaused: false });
+  store.putEntitlement(source.workspaceId, { status: 'PAID', postingPaused: false });
   const engine = new SyncEngine({ store, quickBooks, recoverOnStart: false });
   const day = engine.ingest(source);
   const idempotencyKey = makeIdempotencyKey({
@@ -104,7 +104,8 @@ test('T-INTERRUPTED-WRITE: startup reconciles a committed POSTING row without an
   store.close();
 
   store = new SqliteStore(database);
-  new SyncEngine({ store, quickBooks });
+  const restarted = new SyncEngine({ store, quickBooks });
+  await restarted.whenReady();
   const recovered = store.getDay(day.id);
   assert.equal(recovered.status, DayStatus.POSTED);
   assert.equal(quickBooks.writeCount, 1);
@@ -113,7 +114,7 @@ test('T-INTERRUPTED-WRITE: startup reconciles a committed POSTING row without an
   rmSync(directory, { recursive: true });
 });
 
-test('T-INTERRUPTED-WRITE: startup safely releases a POSTING row when no journal exists', () => {
+test('T-INTERRUPTED-WRITE: startup safely releases a POSTING row when no journal exists', async () => {
   const { source, store, quickBooks, engine } = setup();
   const day = engine.ingest(source);
   const idempotencyKey = makeIdempotencyKey({
@@ -122,17 +123,18 @@ test('T-INTERRUPTED-WRITE: startup safely releases a POSTING row when no journal
   store.claimAttempt({ dayId: day.id, idempotencyKey, docNumber: day.journal.docNumber, kind: 'ORIGINAL' });
   store.transition(day.id, DayStatus.POSTING);
   const restarted = new SyncEngine({ store, quickBooks });
+  await restarted.whenReady();
   assert.equal(store.getDay(day.id).status, DayStatus.READY_FOR_REVIEW);
   assert.equal(store.listAttempts(day.id).at(-1).outcome, 'NOT_FOUND');
-  assert.equal(restarted.post(day.id).status, DayStatus.POSTED);
+  assert.equal((await restarted.post(day.id)).status, DayStatus.POSTED);
   assert.equal(quickBooks.writeCount, 1);
   store.close();
 });
 
-test('T-INTERRUPTED-CORRECTION: startup preserves and resumes a correction write', () => {
+test('T-INTERRUPTED-CORRECTION: startup preserves and resumes a correction write', async () => {
   const { source, mapping, store, quickBooks, engine } = setup();
   const day = engine.ingest(source);
-  engine.post(day.id);
+  await engine.post(day.id);
   engine.ingest(fixture('us-day-changed.json'));
   const correcting = store.transition(day.id, DayStatus.CORRECTING, { correctionVersion: 1 });
   const reversal = buildJournal(correcting.source, mapping, { sequence: 1, reverse: true, kind: 'REVERSAL' });
@@ -141,8 +143,9 @@ test('T-INTERRUPTED-CORRECTION: startup preserves and resumes a correction write
   quickBooks.createJournal(reversal, { idempotencyKey });
 
   const restarted = new SyncEngine({ store, quickBooks });
+  await restarted.whenReady();
   assert.equal(store.getDay(day.id).status, DayStatus.CORRECTION_PARTIAL);
-  const completed = restarted.correct(day.id);
+  const completed = await restarted.correct(day.id);
   assert.equal(completed.status, DayStatus.CORRECTED);
   assert.equal(completed.journal.kind, 'REPLACEMENT');
   assert.equal(quickBooks.writeCount, 3);

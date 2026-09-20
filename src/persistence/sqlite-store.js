@@ -146,17 +146,20 @@ export class SqliteStore {
     return row ? { id: row.id, realmId: row.realm_id, country: row.country, currency: row.currency, createdAt: row.created_at } : null;
   }
 
-  createLocation({ id, workspaceId, toastLocationId, timezone, departmentRef = id }) {
+  createLocation({ id, workspaceId, sourceLocationKey, toastLocationId, timezone, departmentRef = '' }) {
     const workspace = this.getWorkspace(workspaceId);
     invariant(workspace, 'WORKSPACE_NOT_FOUND', 'Workspace not found.', { workspaceId });
+    const normalizedSourceLocationKey = sourceLocationKey ?? toastLocationId;
+    invariant(typeof normalizedSourceLocationKey === 'string' && normalizedSourceLocationKey,
+      'SOURCE_LOCATION_REQUIRED', 'A stable source location key is required.');
     const scopeHash = makeScopeHash(workspace.realmId, id);
     const collision = this.db.prepare('SELECT id FROM locations WHERE workspace_id = ? AND scope_hash = ?').get(workspaceId, scopeHash);
     invariant(!collision, 'REFERENCE_SCOPE_CONFLICT', 'This location would collide with an existing QuickBooks reference scope.', { locationId: id, conflictingLocationId: collision?.id, scopeHash });
     try {
       this.db.prepare(`INSERT INTO locations(id, workspace_id, toast_location_id, timezone, department_ref, scope_hash, created_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?)`).run(id, workspaceId, toastLocationId, timezone, departmentRef, scopeHash, now());
+        VALUES (?, ?, ?, ?, ?, ?, ?)`).run(id, workspaceId, normalizedSourceLocationKey, timezone, departmentRef, scopeHash, now());
     } catch (error) {
-      throw new AppError('LOCATION_CONFLICT', 'A Toast location can belong to only one workspace.', { id, toastLocationId }, error);
+      throw new AppError('LOCATION_CONFLICT', 'A source location can belong to only one workspace.', { id, sourceLocationKey: normalizedSourceLocationKey }, error);
     }
     return this.getLocation(id);
   }
@@ -164,9 +167,9 @@ export class SqliteStore {
   getLocation(id) {
     const row = this.db.prepare('SELECT * FROM locations WHERE id = ?').get(id);
     return row ? {
-      id: row.id, workspaceId: row.workspace_id, toastLocationId: row.toast_location_id,
+      id: row.id, workspaceId: row.workspace_id, sourceLocationKey: row.toast_location_id,
       timezone: row.timezone, departmentRef: row.department_ref, active: Boolean(row.active),
-      syncPaused: Boolean(row.sync_paused), scopeHash: row.scope_hash, createdAt: row.created_at,
+      postingPaused: Boolean(row.sync_paused), scopeHash: row.scope_hash, createdAt: row.created_at,
     } : null;
   }
 
@@ -246,9 +249,13 @@ export class SqliteStore {
     return this.getLocation(locationId);
   }
 
-  setLocationSyncPaused(locationId, paused) {
+  setLocationPostingPaused(locationId, paused) {
     this.db.prepare('UPDATE locations SET sync_paused = ? WHERE id = ?').run(Number(Boolean(paused)), locationId);
     return this.getLocation(locationId);
+  }
+
+  setLocationSyncPaused(locationId, paused) {
+    return this.setLocationPostingPaused(locationId, paused);
   }
 
   transition(dayId, status, patch = {}) {

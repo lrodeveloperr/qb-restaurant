@@ -1,38 +1,42 @@
-# Production adapter contract
+# Production boundary contracts
 
-## Toast input
+## Restaurant CSV input
 
-A production Toast adapter must return one finalized location-day as canonical schema v1. It owns vendor-field parsing and sign normalization. It must not guess missing categories, accounts, timezone, country or currency.
+Launch supports uploaded CSV, not a Toast API connection.
 
-Required behavior:
+- Accept only a named, versioned profile whose exact headers and field meanings were proven by an anonymized real export.
+- Bind workspace, realm, restaurant, internal location, source-location key, timezone, country and currency from authenticated server configuration.
+- Use an explicit date format and an explicit sign rule for every mapped amount.
+- Preserve source tax totals; never calculate GST, QST or sales tax.
+- Reject unknown/duplicate headers, mixed locations, duplicate dates, malformed quotes, unexpected signs, sub-cent values, oversized files and unsupported encodings.
+- Create a fingerprint per location-day, not per uploaded file.
+- Never infer categories, gross/net relationships, accounts or posting directions from labels alone.
 
-- return stable restaurant, location, source-version and business-date identifiers;
-- use the location's IANA timezone;
-- return non-negative safe integer cents after documented sign normalization;
-- distinguish not-finalized, missing, authentication and rate-limit outcomes;
-- preserve source tax totals; never calculate GST, QST or sales tax;
-- prove US and Canadian behavior with anonymized real fixtures.
+Real US and Quebec Toast CSV files and accountant-approved expected journals are required before either native profile can become `LOCKED`.
 
-## QuickBooks transport
+## QuickBooks Online transport
 
-A production QuickBooks adapter must implement the behavior exercised by `FakeQuickBooks`:
+`QuickBooksOnlineAdapter` must:
 
-- create a locked journal with the engine idempotency key sent as QuickBooks Online's caller-supplied `requestid` query parameter;
-- read a journal by ID;
-- find an exact journal by deterministic `DocNumber`;
-- find accounting-equivalent journals by date, transaction-level location and normalized lines;
-- surface rejected writes separately from unknown outcomes;
-- honor rate limits and refresh credentials without changing the payload;
-- preserve `TxnDate`, `DocNumber`, `PrivateNote`, transaction `DepartmentRef`, line `ClassRef`, accounts, directions and amounts.
+- create a locked `JournalEntry`, sending the durable attempt key as QBO `requestid`;
+- preserve `TxnDate`, `DocNumber`, `PrivateNote`, `CurrencyRef`, transaction `DepartmentRef`, line `ClassRef`, accounts, directions and amounts;
+- verify that a create response is accounting-equivalent to the submitted journal;
+- read by ID, query the stable `DocNumber`, and search same-date entries for an order-independent accounting equivalent;
+- distinguish known rejection from an unknown create outcome;
+- refresh authorization once after a 401 without changing request body or identity;
+- expose 429 `Retry-After` data and never blindly replay an uncertain create;
+- paginate same-day duplicate searches.
 
-Intuit documents `requestid` as unique per company file and recommends it to prevent duplicate transactions. The adapter must still never blindly retry a create after a timeout: the engine durably claims the attempt first and queries the deterministic `DocNumber` before it permits another write. The local attempt ledger, `requestid`, `DocNumber`, and `PrivateNote` are independent layers; production safety must not depend on the simulator's in-memory map.
+The durable attempt ledger, `requestid`, `DocNumber` and `PrivateNote` are independent safeguards. Production correctness must not depend on the deterministic fake adapter.
 
-Reference: <https://developer.intuit.com/app/developer/qbo/docs/learn/learn-basic-field-definitions>
+## OAuth and credential custody
 
-## OAuth and credentials
-
-The web shell owns OAuth redirects and stores encrypted refresh credentials in a replaceable secret vault. Workspace deletion must revoke external credentials before primary customer-data purge. No token or client secret belongs in SQLite, fixtures, logs or the release bundle.
+- Request only `com.intuit.quickbooks.accounting`.
+- Generate and validate a high-entropy OAuth state value bound to the initiating browser session.
+- Exchange and refresh tokens with HTTP Basic client authentication.
+- Store refresh credentials encrypted in a replaceable secret vault; do not store them in SQLite, logs, fixtures or release bundles.
+- Revoke the external token before workspace customer-data purge begins.
 
 ## Required external proof
 
-Production readiness requires successful contract runs in one US/USD and one CA/CAD QuickBooks sandbox, approved commercial Toast access, real anonymized US and Quebec fixtures, and an accountant-approved expected journal for each fixture.
+Production readiness requires a successful original, duplicate, timeout/recovery, external-edit and correction suite in one US/USD and one CA/CAD QBO sandbox; real anonymized CSV/accounting fixtures; independent review; and owner acceptance.

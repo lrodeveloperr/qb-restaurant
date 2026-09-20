@@ -1,6 +1,6 @@
 # External review reconciliation
 
-This record maps the structural-integrity review to release `0.1.1` changes.
+This record maps the structural-integrity review to release `0.2.0` changes. The same release also replaces the former direct-Toast launch assumption with an exact-profile CSV upload boundary.
 
 | Finding | Disposition | Evidence |
 |---|---|---|
@@ -13,5 +13,8 @@ This record maps the structural-integrity review to release `0.1.1` changes.
 | `toCsvSource` did not escape cells | Fixed | All cells receive RFC-style quote escaping; identity/category cells receive reversible spreadsheet-formula neutralization. |
 | Node 24 was declared but not enforced | Fixed | `.npmrc` rejects incompatible engines, validation checks the running major version, and CI runs the full gate on Node 24. Local verification used Node 24.19.0. |
 | Malformed quoted CSV fields were tolerated | Fixed | Quotes inside unquoted cells and trailing characters after a closing quote now fail with `MALFORMED_CSV`. |
+| Direct Toast access was still a launch dependency | Removed from launch | `TOAST_CSV_UPLOAD` is now the only input method. Trusted-context binding, exact profiles, explicit signs, per-day fingerprints and stale-review protection are implemented; real US/Quebec exports remain external evidence. |
+| Internal location IDs could become QBO departments | Fixed | QBO `DepartmentRef` is a separately stored optional reference; the engine never derives it from the source/internal location ID. |
+| QBO line order could defeat equivalence | Fixed | Accounting projections canonical-sort account, direction, amount and class before duplicate/external-change comparison. |
 
 QuickBooks request identifier reference: <https://developer.intuit.com/app/developer/qbo/docs/learn/learn-basic-field-definitions>

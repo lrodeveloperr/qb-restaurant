@@ -1,0 +1,83 @@
+{
+  "version": 2,
+  "entries": {
+    "beverage_sales": {
+      "accountId": "ca-qc-income-beverage-demo",
+      "accountName": "Ventes - boissons",
+      "postingType": "Credit",
+      "active": true
+    },
+    "card": {
+      "accountId": "ca-qc-clearing-card-demo",
+      "accountName": "Compte d'attente - cartes",
+      "postingType": "Debit",
+      "active": true
+    },
+    "cash": {
+      "accountId": "ca-qc-asset-cash-demo",
+      "accountName": "Encaisse",
+      "postingType": "Debit",
+      "active": true
+    },
+    "delivery_platform_tender": {
+      "accountId": "ca-qc-clearing-delivery-demo",
+      "accountName": "Compte d'attente - plateformes de livraison",
+      "postingType": "Debit",
+      "active": true
+    },
+    "discounts": {
+      "accountId": "ca-qc-contra-discounts-demo",
+      "accountName": "Rabais sur ventes",
+      "postingType": "Debit",
+      "active": true
+    },
+    "food_sales": {
+      "accountId": "ca-qc-income-food-demo",
+      "accountName": "Ventes - aliments",
+      "postingType": "Credit",
+      "active": true
+    },
+    "gift_cards_redeemed": {
+      "accountId": "ca-qc-liability-gift-card-demo",
+      "accountName": "Passif au titre des cartes-cadeaux",
+      "postingType": "Debit",
+      "active": true
+    },
+    "gift_cards_sold": {
+      "accountId": "ca-qc-liability-gift-card-demo",
+      "accountName": "Passif au titre des cartes-cadeaux",
+      "postingType": "Credit",
+      "active": true
+    },
+    "gst": {
+      "accountId": "ca-qc-liability-gst-demo",
+      "accountName": "TPS à remettre",
+      "postingType": "Credit",
+      "active": true
+    },
+    "qst": {
+      "accountId": "ca-qc-liability-qst-demo",
+      "accountName": "TVQ à remettre",
+      "postingType": "Credit",
+      "active": true
+    },
+    "refunds": {
+      "accountId": "ca-qc-contra-refunds-demo",
+      "accountName": "Remboursements sur ventes",
+      "postingType": "Debit",
+      "active": true
+    },
+    "service_charges": {
+      "accountId": "ca-qc-income-service-charge-demo",
+      "accountName": "Produits tirés des frais de service",
+      "postingType": "Credit",
+      "active": true
+    },
+    "tips": {
+      "accountId": "ca-qc-liability-tips-demo",
+      "accountName": "Pourboires à payer",
+      "postingType": "Credit",
+      "active": true
+    }
+  }
+}

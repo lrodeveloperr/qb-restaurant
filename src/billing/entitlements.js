@@ -29,7 +29,9 @@ export function startTrial(entitlement, activatedAt) {
 
 export function evaluateEntitlement(entitlement, nowValue = new Date().toISOString()) {
   const now = instant(nowValue, 'now');
-  if (entitlement.syncPaused) return { canPost: false, reason: 'SYNC_PAUSED', effectiveStatus: entitlement.status };
+  if (entitlement.postingPaused ?? entitlement.syncPaused) {
+    return { canPost: false, reason: 'POSTING_PAUSED', effectiveStatus: entitlement.status };
+  }
 
   switch (entitlement.status) {
     case EntitlementStatus.PAID:
@@ -54,6 +56,10 @@ export function evaluateEntitlement(entitlement, nowValue = new Date().toISOStri
   }
 }
 
-export function pauseSync(entitlement, paused = true) {
-  return { ...entitlement, syncPaused: Boolean(paused) };
+export function pausePosting(entitlement, paused = true) {
+  const { syncPaused: _legacySyncPaused, ...current } = entitlement;
+  return { ...current, postingPaused: Boolean(paused) };
 }
+
+// Backward-compatible API for persisted pre-CSV-launch callers.
+export const pauseSync = pausePosting;

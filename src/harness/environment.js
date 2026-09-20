@@ -16,9 +16,9 @@ export function createHarness({ market = 'US', entitlement } = {}) {
   const mapping = loadFixture(market === 'CA' ? 'ca-mapping.json' : 'us-mapping.json');
   const store = new SqliteStore();
   store.createWorkspace({ id: source.workspaceId, realmId: source.realmId, country: source.country, currency: source.currency });
-  store.createLocation({ id: source.locationId, workspaceId: source.workspaceId, toastLocationId: `toast-${source.locationId}`, timezone: source.timezone });
+  store.createLocation({ id: source.locationId, workspaceId: source.workspaceId, sourceLocationKey: `csv-${source.locationId}`, timezone: source.timezone });
   store.saveMapping(source.locationId, mapping);
-  store.putEntitlement(source.workspaceId, entitlement ?? { status: 'PAID', syncPaused: false });
+  store.putEntitlement(source.workspaceId, entitlement ?? { status: 'PAID', postingPaused: false });
   const quickBooks = new FakeQuickBooks();
   const engine = new SyncEngine({ store, quickBooks, clock: () => '2026-09-20T12:00:00.000Z' });
   return { source, mapping, store, quickBooks, engine };

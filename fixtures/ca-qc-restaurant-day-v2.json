@@ -1,0 +1,28 @@
+{
+  "schemaVersion": 1,
+  "workspaceId": "ws-ca-qc-v2",
+  "realmId": "realm-ca-qc-sandbox",
+  "restaurantId": "restaurant-montreal-demo",
+  "locationId": "toast-location-montreal-demo",
+  "businessDate": "2026-09-18",
+  "timezone": "America/Toronto",
+  "country": "CA",
+  "currency": "CAD",
+  "sourceVersion": "csv-upload-ca-qc-v2-revision-1",
+  "categories": {
+    "beverage_sales": 25000,
+    "card": 122018,
+    "cash": 30000,
+    "delivery_platform_tender": 10000,
+    "discounts": 5000,
+    "food_sales": 100000,
+    "gift_cards_redeemed": 4000,
+    "gift_cards_sold": 5000,
+    "gst": 6350,
+    "qst": 12668,
+    "refunds": 1000,
+    "service_charges": 8000,
+    "tips": 15000,
+    "voids": 0
+  }
+}

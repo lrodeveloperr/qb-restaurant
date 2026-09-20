@@ -1,72 +1,68 @@
-# Restaurant Sales Sync for QuickBooks — Engine Candidate
+# Restaurant Sales Sync for QuickBooks
 
-This package implements the locked non-visual engine for a Toast-first restaurant sales sync. It converts one finalized restaurant location-day into one balanced QuickBooks journal, prevents duplicate writes, exposes failures, and supports controlled reversal-and-replacement corrections.
+CSV-first restaurant sales posting for QuickBooks Online. The application imports a supported daily sales-summary CSV, validates it without guessing, builds a balanced journal for review, posts it once, and corrects a changed day with a controlled reversal and replacement.
 
-## Current status
+## Status
 
-**ENGINE PROVISIONAL**
+**PROVISIONAL production foundation**
 
-The canonical engine, SQLite persistence, billing rules, localization, CSV pilot adapter, deterministic QuickBooks simulator, diagnostic harness and automated tests are included. Production status remains provisional until WorksBien obtains:
+Included now:
 
-1. approved Toast integration access and real United States and Canadian source fixtures;
-2. QuickBooks sandbox proof for United States/USD and Canada/CAD journal writes;
-3. independent external verification and user acceptance of the plain harness.
+- exact-profile restaurant CSV import with trusted tenant/location binding;
+- US/USD and Canada/CAD journal engine using integer cents;
+- real QuickBooks Online HTTP and OAuth adapters plus a deterministic test adapter;
+- durable SQLite posting ledger, duplicate protection, crash recovery and corrections;
+- explicit review confirmation before batch posting;
+- trial, payment-grace, per-location pricing and posting-pause rules;
+- `en-US`, `en-CA`, `es-US` and `fr-CA` engine catalogs;
+- automated tests, structured CSV fuzzing, mutation sentinels, benchmark and release gate.
 
-No visual production UI is included. That boundary is intentional: the engine must be verified before it is skinned.
+Launch does **not** connect to the Toast API and does not claim automatic daily retrieval. A user exports the supported Toast Sales Summary CSV and uploads it. Real anonymized US and Quebec CSVs, accounting approval, live US/CA QuickBooks sandbox proof, independent review and user acceptance are still required before the candidate may be called production-ready.
 
-## Requirements
+No production web UI, hosting, email delivery, checkout, token vault or legal URLs are included in this repository.
 
-- Node.js 24 or later. The project uses built-in `node:sqlite`, `node:test` and Web Crypto only.
-- No package installation is required.
+## Requirements and verification
 
-## Run it
+Node.js 24 or later; no package installation is required.
 
 ```bash
 npm run check
 npm test
-npm run harness -- list
-npm run harness -- run normal-us
-npm run harness -- run normal-ca-fr
-npm run harness -- run timeout-after-commit
-npm run harness -- run correction
-npm run harness -- run external-edit
-npm run harness -- run all
+npm run harness -- all
+npm run mutation
+npm run fuzz
 npm run benchmark
 npm run gate
 ```
 
-Use `--locale en-US`, `en-CA`, `es-US` or `fr-CA` after a scenario command to change the diagnostic output language without changing source or accounting data.
+The gate can pass every automated check while correctly returning `PROVISIONAL` because external evidence is intentionally separate.
 
 ## Safety model
 
-- Monetary values are integer cents from input through journal generation.
-- Every non-zero category requires an approved mapping.
-- Debits must equal credits exactly; the engine never creates a plug.
-- One workspace belongs to one QuickBooks realm.
-- A stable 21-character reference identifies every write.
-- Every write is claimed in the durable attempt ledger and uses a QuickBooks `requestid` plus a stable `DocNumber`.
-- Timed-out and process-interrupted writes are queried before retry, including stale `POSTING` and `CORRECTING` rows recovered at startup.
-- Colliding shortened reference scopes are rejected when a location is created.
-- An existing unreferenced equivalent journal blocks as a possible duplicate.
-- External edits or deletion block automated correction.
-- New source revisions replace an unstarted correction or queue behind one already in flight.
-- Billing-denied writes persist as `ENTITLEMENT_BLOCKED` and resume from their prior state after entitlement returns.
-- Posted records retain their source fingerprint and mapping version.
-- Locale changes never translate or mutate restaurant or accounting data.
+- Money remains safe integer cents from import through journal construction.
+- Every non-zero category needs an approved account and debit/credit direction.
+- Debits equal credits exactly; no suspense or plug line is created.
+- Exact header, sign, decimal and location rules fail closed.
+- CSV identity is bound from trusted configuration; uploaded cells cannot select a workspace or QuickBooks realm.
+- One per-day source fingerprint prevents unrelated dates in one upload from appearing revised.
+- QuickBooks department IDs are explicit QBO references, never internal/source IDs.
+- Equivalent-journal comparison is independent of line order.
+- Every write is durably claimed and uses a stable `requestid`, `DocNumber` and `PrivateNote`.
+- Uncertain and process-interrupted writes are queried before retry.
+- Posted source changes create one full reversal and one replacement.
+- External edits/deletions stop automated correction.
+- A reviewed source and accounting fingerprint must still match at post confirmation.
 
 ## Project map
 
-- `contracts/` — atomic requirements, test manifest and locked decisions.
-- `src/domain/` — normalization, journals, state transitions and orchestration.
-- `src/persistence/` — SQLite schema and durable posting ledger.
-- `src/adapters/` — CSV pilot and deterministic Toast/QuickBooks simulators.
-- `src/billing/` — trial, subscription and grace-period rules.
-- `src/i18n/` — complete locale catalogs and formatters.
-- `src/harness/` — runnable acceptance scenarios.
-- `fixtures/` — United States and Quebec/CAD sample days and mappings.
-- `test/` — unit, integration, property, recovery and localization tests.
-- `reports/` — generated gate and benchmark evidence.
+- `contracts/` — atomic requirements, gate manifest and locked decisions.
+- `src/adapters/restaurant-csv.js` — exact-profile CSV production boundary.
+- `src/adapters/quickbooks-online.js` and `quickbooks-oauth.js` — real QBO transport boundary.
+- `src/application/` — review-confirmed CSV-to-post workflow.
+- `src/domain/` — normalization, journals, states, idempotency and correction orchestration.
+- `src/persistence/` — SQLite tenancy, mapping, entitlement and attempt ledger.
+- `src/billing/`, `src/i18n/`, `src/security/` — commercial and operating controls.
+- `docs/accounting-*.md` — expert US and Canada/Quebec accounting reviews.
+- `docs/quickbooks-submission-pack.md` — submission checklist and blocked owner inputs.
 
-## Production adapter boundary
-
-`QuickBooksPort` and `ToastPort` behavior is exercised through deterministic simulators. A production adapter must satisfy the same contract and pass the same fixtures. The engine contains no embedded client secrets, credentials, or undocumented scraping.
+The product name and price remain locked: **Restaurant Sales Sync for QuickBooks**, US$29 per active posting location/month in the United States or C$39/month in Canada, with applicable tax shown before sale.

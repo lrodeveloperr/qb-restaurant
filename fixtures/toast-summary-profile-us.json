@@ -1,0 +1,20 @@
+{
+  "schemaVersion": 1,
+  "format": "WIDE_DAILY_SUMMARY",
+  "expectedHeaders": ["Business Date", "Location", "Food Sales", "Beverage Sales", "Discounts", "Sales Tax", "Tips", "Cash", "Card"],
+  "dateColumn": "Business Date",
+  "dateFormat": "MM/DD/YYYY",
+  "locationColumn": "Location",
+  "currencySymbols": ["$"],
+  "thousandsSeparator": ",",
+  "decimalSeparator": ".",
+  "categoryColumns": {
+    "Food Sales": {"category": "food_sales", "polarity": "NON_NEGATIVE"},
+    "Beverage Sales": {"category": "beverage_sales", "polarity": "NON_NEGATIVE"},
+    "Discounts": {"category": "discounts", "polarity": "NON_POSITIVE_TO_MAGNITUDE"},
+    "Sales Tax": {"category": "sales_tax", "polarity": "NON_NEGATIVE"},
+    "Tips": {"category": "tips", "polarity": "NON_NEGATIVE"},
+    "Cash": {"category": "cash", "polarity": "NON_NEGATIVE"},
+    "Card": {"category": "card", "polarity": "NON_NEGATIVE"}
+  }
+}

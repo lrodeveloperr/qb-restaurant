@@ -1,0 +1,86 @@
+{
+  "version": 2,
+  "approvalStatus": "LATEEF_APPROVAL_REQUIRED",
+  "assumptions": {
+    "discounts_and_comps": "Debit to contra-revenue; an approved expense account is also possible.",
+    "refunds": "Debit to sales returns and allowances; a source may instead net refunds into sales.",
+    "service_charges": "Credit to revenue in this simulated fixture only; treatment may instead be a liability.",
+    "tips_payable": "Credit to an employee tips liability; this app does not allocate or pay tips.",
+    "delivery_tender": "Debit a gross delivery-platform clearing account; settlement fees are outside this daily journal.",
+    "gift_cards": "Sold credits and redeemed debits the same liability; third-party programs may require a different due-to/from account."
+  },
+  "entries": {
+    "card_tender": {
+      "accountId": "qb-us-card-clearing",
+      "accountName": "Card Clearing",
+      "postingType": "Debit",
+      "active": true
+    },
+    "cash_tender": {
+      "accountId": "qb-us-undeposited-cash",
+      "accountName": "Undeposited Cash",
+      "postingType": "Debit",
+      "active": true
+    },
+    "delivery_tender": {
+      "accountId": "qb-us-delivery-clearing",
+      "accountName": "Delivery Platform Clearing",
+      "postingType": "Debit",
+      "active": true
+    },
+    "discounts_and_comps": {
+      "accountId": "qb-us-discounts",
+      "accountName": "Discounts and Comps",
+      "postingType": "Debit",
+      "active": true
+    },
+    "food_sales": {
+      "accountId": "qb-us-food-sales",
+      "accountName": "Food Sales",
+      "postingType": "Credit",
+      "active": true
+    },
+    "gift_cards_redeemed": {
+      "accountId": "qb-us-gift-card-liability",
+      "accountName": "Gift Card Liability",
+      "postingType": "Debit",
+      "active": true
+    },
+    "gift_cards_sold": {
+      "accountId": "qb-us-gift-card-liability",
+      "accountName": "Gift Card Liability",
+      "postingType": "Credit",
+      "active": true
+    },
+    "nonalcoholic_beverage_sales": {
+      "accountId": "qb-us-beverage-sales",
+      "accountName": "Nonalcoholic Beverage Sales",
+      "postingType": "Credit",
+      "active": true
+    },
+    "refunds": {
+      "accountId": "qb-us-sales-returns",
+      "accountName": "Sales Returns and Allowances",
+      "postingType": "Debit",
+      "active": true
+    },
+    "sales_tax": {
+      "accountId": "qb-us-sales-tax-payable",
+      "accountName": "Sales Tax Payable",
+      "postingType": "Credit",
+      "active": true
+    },
+    "service_charges": {
+      "accountId": "qb-us-service-charge-revenue",
+      "accountName": "Service Charge Revenue",
+      "postingType": "Credit",
+      "active": true
+    },
+    "tips_payable": {
+      "accountId": "qb-us-tips-payable",
+      "accountName": "Tips Payable",
+      "postingType": "Credit",
+      "active": true
+    }
+  }
+}

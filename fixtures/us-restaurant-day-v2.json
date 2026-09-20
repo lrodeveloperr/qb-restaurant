@@ -1,0 +1,28 @@
+{
+  "schemaVersion": 1,
+  "workspaceId": "ws-us-review",
+  "realmId": "realm-us-review",
+  "restaurantId": "restaurant-us-review",
+  "locationId": "location-us-review",
+  "businessDate": "2026-09-18",
+  "timezone": "America/New_York",
+  "country": "US",
+  "currency": "USD",
+  "sourceVersion": "simulated-toast-csv-v2-20260918-a",
+  "categories": {
+    "card_tender": 110000,
+    "cash_tender": 15000,
+    "delivery_tender": 13000,
+    "discounts_and_comps": 4000,
+    "food_sales": 100000,
+    "gift_cards_redeemed": 6000,
+    "gift_cards_sold": 5000,
+    "nonalcoholic_beverage_sales": 20000,
+    "refunds": 3000,
+    "sales_tax": 9000,
+    "service_charges": 5000,
+    "tips_payable": 12000
+  },
+  "fixtureStatus": "SIMULATED_NOT_ACCOUNTANT_APPROVED",
+  "sourceStatus": "NOT_A_REAL_TOAST_EXPORT"
+}

@@ -15,7 +15,11 @@ export class SyncEngine {
     this.store = store;
     this.quickBooks = quickBooks;
     this.clock = clock;
-    if (recoverOnStart) this.recoverInterruptedWrites();
+    this.startupRecovery = recoverOnStart ? this.recoverInterruptedWrites() : Promise.resolve([]);
+  }
+
+  whenReady() {
+    return this.startupRecovery;
   }
 
   ingest(rawSource) {
@@ -60,7 +64,7 @@ export class SyncEngine {
     }
 
     try {
-      const journal = buildJournal(source, mapping);
+      const journal = this.#buildJournal(source, mapping);
       if (existing) return this.store.transition(existing.id, DayStatus.READY_FOR_REVIEW, {
         source, pendingSource: null, queuedSource: null, journal, mappingVersion: mapping.version, errorCode: null, error: null,
       });
@@ -81,7 +85,7 @@ export class SyncEngine {
     const day = this.#day(dayId);
     const mapping = this.store.getMapping(day.locationId);
     invariant(mapping, 'MAPPING_REQUIRED', 'A mapping must be approved before preview.');
-    const journal = buildJournal(day.source, mapping);
+    const journal = this.#buildJournal(day.source, mapping);
     if (day.status === DayStatus.NEEDS_MAPPING || day.status === DayStatus.INVALID_SOURCE || day.status === DayStatus.FAILED || day.status === DayStatus.PAUSED) {
       return this.store.transition(day.id, DayStatus.READY_FOR_REVIEW, { journal, mappingVersion: mapping.version, errorCode: null, error: null });
     }
@@ -89,7 +93,8 @@ export class SyncEngine {
     return { ...day, journal };
   }
 
-  post(dayId, { behavior } = {}) {
+  async post(dayId, { behavior } = {}) {
+    await this.startupRecovery;
     let day = this.#day(dayId);
     if (POSTED.has(day.status)) return day;
     if (day.status === DayStatus.ENTITLEMENT_BLOCKED) {
@@ -98,7 +103,7 @@ export class SyncEngine {
       day = restored;
     }
     if (day.status === DayStatus.OUTCOME_UNKNOWN) {
-      const recovered = this.recover(day.id);
+      const recovered = await this.#recover(day.id);
       return recovered.status === DayStatus.READY_FOR_REVIEW ? this.post(recovered.id, { behavior }) : recovered;
     }
     invariant(day.status === DayStatus.READY_FOR_REVIEW || day.status === DayStatus.FAILED,
@@ -108,7 +113,7 @@ export class SyncEngine {
     const journal = day.journal ?? this.preview(day.id).journal;
     const idempotencyKey = makeIdempotencyKey({ ...sourceIdentity(day.source), kind: 'ORIGINAL', sourceFingerprint: day.sourceFingerprint, mappingVersion: journal.mappingVersion });
 
-    const exact = this.quickBooks.findByDocNumber(journal.docNumber);
+    const exact = await this.quickBooks.findByDocNumber(journal.docNumber);
     if (exact) {
       if (exact.journal.privateNote !== journal.privateNote || !journalsEquivalent(exact.journal, journal)) {
         return this.store.transition(day.id, DayStatus.POSSIBLE_DUPLICATE, {
@@ -118,7 +123,7 @@ export class SyncEngine {
       return this.#completeOriginalPost(day, DayStatus.ALREADY_POSTED, exact);
     }
     if (!day.dismissedDuplicate) {
-      const equivalent = this.quickBooks.findEquivalent(journal, { excludeDocNumber: journal.docNumber });
+      const equivalent = await this.quickBooks.findEquivalent(journal, { excludeDocNumber: journal.docNumber });
       if (equivalent) {
         return this.store.transition(day.id, DayStatus.POSSIBLE_DUPLICATE, {
           errorCode: 'POSSIBLE_DUPLICATE', error: { code: 'POSSIBLE_DUPLICATE', candidateId: equivalent.id },
@@ -129,7 +134,7 @@ export class SyncEngine {
     const claim = this.store.claimAttempt({ dayId: day.id, idempotencyKey, docNumber: journal.docNumber, kind: 'ORIGINAL' });
     if (!claim.claimed) {
       if (['COMMITTED', 'RECOVERED'].includes(claim.attempt.outcome)) {
-        const recorded = claim.attempt.qbId ? this.quickBooks.getJournal(claim.attempt.qbId) : this.quickBooks.findByDocNumber(journal.docNumber);
+        const recorded = claim.attempt.qbId ? await this.quickBooks.getJournal(claim.attempt.qbId) : await this.quickBooks.findByDocNumber(journal.docNumber);
         if (recorded && recorded.journal.privateNote === journal.privateNote && journalsEquivalent(recorded.journal, journal)) {
           if (day.status !== DayStatus.OUTCOME_UNKNOWN) day = this.store.transition(day.id, DayStatus.OUTCOME_UNKNOWN, {
             errorCode: 'OUTCOME_UNKNOWN', error: { code: 'OUTCOME_UNKNOWN', message: 'A durable write attempt is being reconciled.' },
@@ -140,12 +145,12 @@ export class SyncEngine {
       if (day.status !== DayStatus.OUTCOME_UNKNOWN) day = this.store.transition(day.id, DayStatus.OUTCOME_UNKNOWN, {
         errorCode: 'OUTCOME_UNKNOWN', error: { code: 'OUTCOME_UNKNOWN', message: 'A durable write attempt must be reconciled before retry.' },
       });
-      return this.recover(day.id);
+      return this.#recover(day.id);
     }
 
     day = this.store.transition(day.id, DayStatus.POSTING, { errorCode: null, error: null });
     try {
-      const created = this.quickBooks.createJournal(journal, { idempotencyKey, behavior });
+      const created = await this.quickBooks.createJournal(journal, { idempotencyKey, behavior });
       this.store.recordAttempt({ dayId: day.id, idempotencyKey, docNumber: journal.docNumber, kind: 'ORIGINAL', outcome: 'COMMITTED', qbId: created.id });
       return this.#completeOriginalPost(day, DayStatus.POSTED, created);
     } catch (error) {
@@ -155,14 +160,19 @@ export class SyncEngine {
       }
       this.store.recordAttempt({ dayId: day.id, idempotencyKey, docNumber: journal.docNumber, kind: 'ORIGINAL', outcome: 'UNKNOWN' });
       day = this.store.transition(day.id, DayStatus.OUTCOME_UNKNOWN, { errorCode: error.code, error: toSafeError(error) });
-      return this.recover(day.id);
+      return this.#recover(day.id);
     }
   }
 
-  recover(dayId) {
+  async recover(dayId) {
+    await this.startupRecovery;
+    return this.#recover(dayId);
+  }
+
+  async #recover(dayId) {
     const day = this.#day(dayId);
     invariant(day.status === DayStatus.OUTCOME_UNKNOWN, 'RECOVERY_NOT_REQUIRED', 'This day has no uncertain write to recover.');
-    const found = this.quickBooks.findByDocNumber(day.journal.docNumber);
+    const found = await this.quickBooks.findByDocNumber(day.journal.docNumber);
     const attempt = this.store.getLatestAttempt(day.id, 'ORIGINAL', day.journal.docNumber);
     if (found && found.journal.privateNote === day.journal.privateNote && journalsEquivalent(found.journal, day.journal)) {
       if (attempt) this.store.recordAttempt({ ...attempt, outcome: 'RECOVERED', qbId: found.id });
@@ -176,7 +186,7 @@ export class SyncEngine {
     return this.store.transition(day.id, DayStatus.READY_FOR_REVIEW, { errorCode: null, error: null });
   }
 
-  recoverInterruptedWrites() {
+  async recoverInterruptedWrites() {
     const recovered = [];
     for (let day of this.store.listDaysByStatuses([DayStatus.POSTING, DayStatus.OUTCOME_UNKNOWN, DayStatus.CORRECTING])) {
       if (day.status === DayStatus.CORRECTING) {
@@ -190,7 +200,7 @@ export class SyncEngine {
           errorCode: 'INTERRUPTED_WRITE', error: { code: 'INTERRUPTED_WRITE', message: 'The process stopped while a QuickBooks write was in progress.' },
         });
       }
-      recovered.push(this.recover(day.id));
+      recovered.push(await this.#recover(day.id));
     }
     return recovered;
   }
@@ -201,16 +211,18 @@ export class SyncEngine {
     return this.store.transition(day.id, DayStatus.READY_FOR_REVIEW, { dismissedDuplicate: true, errorCode: null, error: null });
   }
 
-  adoptDuplicate(dayId, quickBooksId) {
+  async adoptDuplicate(dayId, quickBooksId) {
+    await this.startupRecovery;
     const day = this.#day(dayId);
     invariant(day.status === DayStatus.POSSIBLE_DUPLICATE, 'NO_POSSIBLE_DUPLICATE', 'No possible duplicate is awaiting review.');
-    const found = this.quickBooks.getJournal(quickBooksId);
+    const found = await this.quickBooks.getJournal(quickBooksId);
     invariant(found, 'QUICKBOOKS_JOURNAL_NOT_FOUND', 'The selected QuickBooks journal no longer exists.');
     invariant(journalsEquivalent(found.journal, day.journal), 'DUPLICATE_MISMATCH', 'The selected QuickBooks journal is not accounting-equivalent to this location-day.');
     return this.store.transition(day.id, DayStatus.ALREADY_POSTED, { qbJournalId: found.id, qbSnapshot: found, errorCode: null, error: null });
   }
 
-  correct(dayId, { reversalBehavior, replacementBehavior } = {}) {
+  async correct(dayId, { reversalBehavior, replacementBehavior } = {}) {
+    await this.startupRecovery;
     let day = this.#day(dayId);
     if (day.status === DayStatus.ENTITLEMENT_BLOCKED) {
       const restored = this.#restoreEntitlementBlocked(day);
@@ -222,7 +234,7 @@ export class SyncEngine {
     const blocked = this.#persistEntitlementBlock(day);
     if (blocked) return blocked;
 
-    const liveOriginal = this.quickBooks.getJournal(day.qbJournalId);
+    const liveOriginal = await this.quickBooks.getJournal(day.qbJournalId);
     if (!liveOriginal || stableStringify(liveOriginal.journal) !== stableStringify(day.qbSnapshot?.journal)) {
       return this.store.transition(day.id, DayStatus.EXTERNAL_CHANGE, {
         errorCode: 'EXTERNAL_CHANGE', error: { code: 'EXTERNAL_CHANGE', deleted: !liveOriginal },
@@ -234,11 +246,11 @@ export class SyncEngine {
     invariant(originalMapping && currentMapping, 'MAPPING_REQUIRED', 'Both original and current mapping versions are required for correction.');
     const correctionVersion = day.status === DayStatus.CORRECTION_PARTIAL ? day.correctionVersion : day.correctionVersion + 1;
     invariant(correctionVersion <= 49, 'CORRECTION_LIMIT', 'This location-day has reached the supported correction limit.');
-    const reversal = buildJournal(day.source, originalMapping, { sequence: correctionVersion * 2 - 1, reverse: true, kind: 'REVERSAL' });
-    const replacement = buildJournal(day.pendingSource, currentMapping, { sequence: correctionVersion * 2, kind: 'REPLACEMENT' });
+    const reversal = this.#buildJournal(day.source, originalMapping, { sequence: correctionVersion * 2 - 1, reverse: true, kind: 'REVERSAL' });
+    const replacement = this.#buildJournal(day.pendingSource, currentMapping, { sequence: correctionVersion * 2, kind: 'REPLACEMENT' });
     if (day.status !== DayStatus.CORRECTING) day = this.store.transition(day.id, DayStatus.CORRECTING, { correctionVersion });
 
-    let reversalRecord = day.reversalQbId ? this.quickBooks.getJournal(day.reversalQbId) : null;
+    let reversalRecord = day.reversalQbId ? await this.quickBooks.getJournal(day.reversalQbId) : null;
     if (day.reversalQbId && (!reversalRecord || reversalRecord.journal.privateNote !== reversal.privateNote || !journalsEquivalent(reversalRecord.journal, reversal))) {
       return this.store.transition(day.id, DayStatus.EXTERNAL_CHANGE, {
         errorCode: 'EXTERNAL_CHANGE', error: { code: 'EXTERNAL_CHANGE', correctionEntry: 'REVERSAL', deleted: !reversalRecord },
@@ -246,7 +258,7 @@ export class SyncEngine {
     }
     if (!reversalRecord) {
       try {
-        reversalRecord = this.#writeCorrection(day, reversal, 'REVERSAL', reversalBehavior);
+        reversalRecord = await this.#writeCorrection(day, reversal, 'REVERSAL', reversalBehavior);
       } catch (error) {
         return this.store.transition(day.id, DayStatus.CORRECTION_PARTIAL, { errorCode: error.code ?? 'QUICKBOOKS_ERROR', error: toSafeError(error) });
       }
@@ -255,10 +267,10 @@ export class SyncEngine {
     }
 
     if (day.status !== DayStatus.CORRECTING) day = this.store.transition(day.id, DayStatus.CORRECTING);
-    let replacementRecord = day.replacementQbId ? this.quickBooks.getJournal(day.replacementQbId) : null;
+    let replacementRecord = day.replacementQbId ? await this.quickBooks.getJournal(day.replacementQbId) : null;
     if (!replacementRecord) {
       try {
-        replacementRecord = this.#writeCorrection(day, replacement, 'REPLACEMENT', replacementBehavior);
+        replacementRecord = await this.#writeCorrection(day, replacement, 'REPLACEMENT', replacementBehavior);
       } catch (error) {
         return this.store.transition(day.id, DayStatus.CORRECTION_PARTIAL, { errorCode: error.code ?? 'QUICKBOOKS_ERROR', error: toSafeError(error) });
       }
@@ -279,19 +291,20 @@ export class SyncEngine {
     return completed;
   }
 
-  auditPostedDay(dayId) {
+  async auditPostedDay(dayId) {
+    await this.startupRecovery;
     const day = this.#day(dayId);
     invariant(POSTED.has(day.status), 'DAY_NOT_POSTED', 'Only posted days can be audited.');
-    const live = this.quickBooks.getJournal(day.qbJournalId);
+    const live = await this.quickBooks.getJournal(day.qbJournalId);
     if (!live || stableStringify(live.journal) !== stableStringify(day.qbSnapshot?.journal)) {
       return this.store.transition(day.id, DayStatus.EXTERNAL_CHANGE, { errorCode: 'EXTERNAL_CHANGE', error: { code: 'EXTERNAL_CHANGE', deleted: !live } });
     }
     return day;
   }
 
-  #writeCorrection(day, journal, kind, behavior) {
+  async #writeCorrection(day, journal, kind, behavior) {
     const idempotencyKey = makeIdempotencyKey({ ...sourceIdentity(day.source), kind, docNumber: journal.docNumber });
-    const exact = this.quickBooks.findByDocNumber(journal.docNumber);
+    const exact = await this.quickBooks.findByDocNumber(journal.docNumber);
     if (exact) {
       invariant(exact.journal.privateNote === journal.privateNote && journalsEquivalent(exact.journal, journal),
         'REFERENCE_COLLISION', 'A QuickBooks journal uses the correction reference with different accounting content.');
@@ -300,7 +313,7 @@ export class SyncEngine {
     const claim = this.store.claimAttempt({ dayId: day.id, idempotencyKey, docNumber: journal.docNumber, kind });
     if (!claim.claimed) {
       if (['COMMITTED', 'RECOVERED'].includes(claim.attempt.outcome) && claim.attempt.qbId) {
-        const recorded = this.quickBooks.getJournal(claim.attempt.qbId);
+        const recorded = await this.quickBooks.getJournal(claim.attempt.qbId);
         if (recorded) {
           invariant(recorded.journal.privateNote === journal.privateNote && journalsEquivalent(recorded.journal, journal),
             'REFERENCE_COLLISION', 'Recorded QuickBooks correction differs from the expected journal.');
@@ -312,7 +325,7 @@ export class SyncEngine {
       invariant(retry.claimed, 'ATTEMPT_CLAIM_FAILED', 'A reconciled correction attempt could not be reclaimed.');
     }
     try {
-      const record = this.quickBooks.createJournal(journal, { idempotencyKey, behavior });
+      const record = await this.quickBooks.createJournal(journal, { idempotencyKey, behavior });
       this.store.recordAttempt({ dayId: day.id, idempotencyKey, docNumber: journal.docNumber, kind, outcome: 'COMMITTED', qbId: record.id });
       return record;
     } catch (error) {
@@ -320,7 +333,7 @@ export class SyncEngine {
         this.store.recordAttempt({ dayId: day.id, idempotencyKey, docNumber: journal.docNumber, kind, outcome: 'FAILED' });
         throw error;
       }
-      const recovered = this.quickBooks.findByDocNumber(journal.docNumber);
+      const recovered = await this.quickBooks.findByDocNumber(journal.docNumber);
       this.store.recordAttempt({ dayId: day.id, idempotencyKey, docNumber: journal.docNumber, kind, outcome: recovered ? 'RECOVERED' : 'UNKNOWN', qbId: recovered?.id });
       if (recovered) invariant(recovered.journal.privateNote === journal.privateNote && journalsEquivalent(recovered.journal, journal),
         'REFERENCE_COLLISION', 'Recovered QuickBooks journal differs from the expected correction.');
@@ -341,7 +354,7 @@ export class SyncEngine {
   #entitlementResult(workspaceId, locationId) {
     const location = this.store.getLocation(locationId);
     invariant(location?.active, 'LOCATION_INACTIVE', 'Posting is unavailable because the location is inactive.');
-    invariant(!location.syncPaused, 'SYNC_PAUSED', 'Posting is unavailable because sync is paused for this location.');
+    invariant(!location.postingPaused, 'POSTING_PAUSED', 'Posting is unavailable because this location is paused.');
     const entitlement = this.store.getEntitlement(workspaceId);
     invariant(entitlement, 'ENTITLEMENT_REQUIRED', 'Workspace entitlement is missing.');
     return evaluateEntitlement(entitlement, this.clock());
@@ -376,6 +389,11 @@ export class SyncEngine {
       completed = this.store.transition(completed.id, completed.status, { queuedSource: null });
     }
     return completed;
+  }
+
+  #buildJournal(source, mapping, options = {}) {
+    const location = this.store.getLocation(source.locationId);
+    return buildJournal(source, mapping, { ...options, departmentRef: location?.departmentRef || null });
   }
 
   #day(dayId) {

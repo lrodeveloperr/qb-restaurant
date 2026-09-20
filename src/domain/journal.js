@@ -18,7 +18,7 @@ export function validateMapping(mapping) {
   return mapping;
 }
 
-export function buildJournal(source, mapping, { sequence = 0, reverse = false, kind } = {}) {
+export function buildJournal(source, mapping, { sequence = 0, reverse = false, kind, departmentRef = null } = {}) {
   validateMapping(mapping);
   const lines = [];
   const unmapped = [];
@@ -58,7 +58,7 @@ export function buildJournal(source, mapping, { sequence = 0, reverse = false, k
     privateNote: makePrivateNote({ ...source, sequence }),
     txnDate: source.businessDate,
     currency: source.currency,
-    departmentRef: source.locationId,
+    departmentRef: departmentRef || null,
     sourceFingerprint: source.sourceFingerprint,
     mappingVersion: mapping.version,
     lines,
@@ -68,11 +68,14 @@ export function buildJournal(source, mapping, { sequence = 0, reverse = false, k
 }
 
 export function accountingProjection(journal) {
+  const lines = journal.lines
+    .map(({ amountCents, postingType, accountRef, classRef = null }) => ({ amountCents, postingType, accountRef, classRef }))
+    .sort((left, right) => stableStringify(left).localeCompare(stableStringify(right)));
   return {
     txnDate: journal.txnDate,
     currency: journal.currency,
     departmentRef: journal.departmentRef,
-    lines: journal.lines.map(({ amountCents, postingType, accountRef, classRef = null }) => ({ amountCents, postingType, accountRef, classRef })),
+    lines,
     totals: journal.totals,
   };
 }

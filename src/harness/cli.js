@@ -7,63 +7,63 @@ import { createHarness, loadFixture } from './environment.js';
 
 let localeOverride = null;
 const scenarios = {
-  'normal-us': () => {
+  'normal-us': async () => {
     const context = createHarness();
     const day = context.engine.ingest(context.source);
-    const posted = context.engine.post(day.id);
+    const posted = await context.engine.post(day.id);
     return result('normal-us', context, posted, 'en-US');
   },
-  'normal-ca-fr': () => {
+  'normal-ca-fr': async () => {
     const context = createHarness({ market: 'CA' });
     const day = context.engine.ingest(context.source);
-    const posted = context.engine.post(day.id);
+    const posted = await context.engine.post(day.id);
     return result('normal-ca-fr', context, posted, 'fr-CA');
   },
-  unmapped: () => {
+  unmapped: async () => {
     const context = createHarness();
     const source = { ...context.source, categories: { ...context.source.categories, delivery_fee: 100, card: context.source.categories.card + 100 } };
     const day = context.engine.ingest(source);
     return result('unmapped', context, day, 'en-US');
   },
-  'timeout-after-commit': () => {
+  'timeout-after-commit': async () => {
     const context = createHarness();
     const day = context.engine.ingest(context.source);
-    const posted = context.engine.post(day.id, { behavior: WriteBehavior.TIMEOUT_AFTER_COMMIT });
+    const posted = await context.engine.post(day.id, { behavior: WriteBehavior.TIMEOUT_AFTER_COMMIT });
     return result('timeout-after-commit', context, posted, 'en-US');
   },
-  duplicate: () => {
+  duplicate: async () => {
     const context = createHarness();
     const day = context.engine.ingest(context.source);
     const journal = structuredClone(buildJournal(normalizeSource(context.source), context.mapping));
     journal.docNumber = 'MANUAL-IMPORT';
     context.quickBooks.seedJournal(journal);
-    const blocked = context.engine.post(day.id);
+    const blocked = await context.engine.post(day.id);
     return result('duplicate', context, blocked, 'en-US');
   },
-  correction: () => {
+  correction: async () => {
     const context = createHarness();
     const day = context.engine.ingest(context.source);
-    context.engine.post(day.id);
+    await context.engine.post(day.id);
     context.engine.ingest(loadFixture('us-day-changed.json'));
-    const corrected = context.engine.correct(day.id);
+    const corrected = await context.engine.correct(day.id);
     return result('correction', context, corrected, 'en-US');
   },
-  'external-edit': () => {
+  'external-edit': async () => {
     const context = createHarness();
     const day = context.engine.ingest(context.source);
-    const posted = context.engine.post(day.id);
+    const posted = await context.engine.post(day.id);
     context.quickBooks.mutateJournal(posted.qbJournalId, (journal) => ({ ...journal, privateNote: 'manual edit' }));
     context.engine.ingest(loadFixture('us-day-changed.json'));
-    const blocked = context.engine.correct(day.id);
+    const blocked = await context.engine.correct(day.id);
     return result('external-edit', context, blocked, 'en-US');
   },
-  'trial-expired': () => {
-    const context = createHarness({ entitlement: { status: 'TRIAL', trialStartedAt: '2026-09-01T00:00:00.000Z', trialEndsAt: '2026-09-15T00:00:00.000Z', syncPaused: false } });
+  'trial-expired': async () => {
+    const context = createHarness({ entitlement: { status: 'TRIAL', trialStartedAt: '2026-09-01T00:00:00.000Z', trialEndsAt: '2026-09-15T00:00:00.000Z', postingPaused: false } });
     const day = context.engine.ingest(context.source);
-    const blocked = context.engine.post(day.id);
+    const blocked = await context.engine.post(day.id);
     return { scenario: 'trial-expired', status: blocked.status, error: blocked.error, externalWrites: context.quickBooks.writeCount };
   },
-  'locale-switch': () => {
+  'locale-switch': async () => {
     const context = createHarness({ market: 'CA' });
     const day = context.engine.ingest(context.source);
     const before = JSON.stringify(day.journal);
@@ -99,8 +99,8 @@ try {
   if (command === 'list') console.log(JSON.stringify(usage(), null, 2));
   else if (command === 'run') {
     if (!scenarios[name]) throw new Error(`Unknown scenario: ${name}`);
-    console.log(JSON.stringify(scenarios[name](), null, 2));
-  } else if (command === 'all') console.log(JSON.stringify(Object.values(scenarios).map((run) => run()), null, 2));
+    console.log(JSON.stringify(await scenarios[name](), null, 2));
+  } else if (command === 'all') console.log(JSON.stringify(await Promise.all(Object.values(scenarios).map((run) => run())), null, 2));
   else throw new Error(`Unknown command: ${command}`);
 } catch (error) {
   console.error(JSON.stringify({ ok: false, error: { code: error.code ?? 'HARNESS_ERROR', message: error.message, details: error.details ?? {} }, ...usage() }, null, 2));

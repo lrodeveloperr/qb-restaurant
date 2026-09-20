@@ -8,7 +8,7 @@ export const CSV_HEADER = Object.freeze([
 export const MAX_CSV_BYTES = 10 * 1024 * 1024;
 export const MAX_CSV_ROWS = 100_000;
 
-function rows(text) {
+export function parseCsvRows(text) {
   const output = [];
   let row = [];
   let cell = '';
@@ -68,7 +68,7 @@ function decodeFormulaSafe(value) {
   return /^'[=+\-@\t\r]/.test(value) ? value.slice(1) : value;
 }
 
-function csvCell(value, { formulaSafe = false } = {}) {
+export function csvCell(value, { formulaSafe = false } = {}) {
   let text = String(value);
   if (formulaSafe && text.startsWith("'")) text = `'${text}`;
   else if (formulaSafe && /^[=+\-@\t\r]/.test(text)) text = `'${text}`;
@@ -80,7 +80,7 @@ export function parseCsvSource(input) {
   const buffer = Buffer.isBuffer(input) ? input : Buffer.from(input, 'utf8');
   invariant(buffer.byteLength <= MAX_CSV_BYTES, 'CSV_TOO_LARGE', 'CSV files cannot exceed 10 MiB.', { bytes: buffer.byteLength });
   const text = buffer.toString('utf8').replace(/^\uFEFF/, '');
-  const parsed = rows(text);
+  const parsed = parseCsvRows(text);
   invariant(parsed.length >= 2, 'EMPTY_CSV', 'CSV must include a header and at least one data row.');
   invariant(parsed.length - 1 <= MAX_CSV_ROWS, 'CSV_TOO_MANY_ROWS', 'CSV files cannot exceed 100,000 data rows.', { rows: parsed.length - 1 });
   invariant(parsed[0].join(',') === CSV_HEADER.join(','), 'INVALID_CSV_HEADER', 'CSV header does not match schema version 1.', { expected: CSV_HEADER, actual: parsed[0] });
