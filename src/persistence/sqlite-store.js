@@ -2,6 +2,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { randomUUID } from 'node:crypto';
 import { assertTransition } from '../domain/state-machine.js';
 import { AppError, invariant } from '../domain/errors.js';
+import { makeScopeHash } from '../domain/reference.js';
 
 function parse(value) {
   return value == null ? null : JSON.parse(value);
@@ -38,6 +39,7 @@ export class SqliteStore {
         toast_location_id TEXT NOT NULL,
         timezone TEXT NOT NULL,
         department_ref TEXT NOT NULL,
+        scope_hash TEXT,
         active INTEGER NOT NULL DEFAULT 1,
         sync_paused INTEGER NOT NULL DEFAULT 0,
         created_at TEXT NOT NULL
@@ -60,6 +62,7 @@ export class SqliteStore {
         source_fingerprint TEXT NOT NULL,
         source_json TEXT NOT NULL,
         pending_source_json TEXT,
+        queued_source_json TEXT,
         status TEXT NOT NULL,
         mapping_version INTEGER,
         journal_json TEXT,
@@ -68,6 +71,7 @@ export class SqliteStore {
         reversal_qb_id TEXT,
         replacement_qb_id TEXT,
         correction_version INTEGER NOT NULL DEFAULT 0,
+        blocked_from_status TEXT,
         dismissed_duplicate INTEGER NOT NULL DEFAULT 0,
         error_code TEXT,
         error_json TEXT,
@@ -95,7 +99,22 @@ export class SqliteStore {
     `);
     const columns = this.db.prepare('PRAGMA table_info(days)').all().map((column) => column.name);
     if (!columns.includes('correction_version')) this.db.exec('ALTER TABLE days ADD COLUMN correction_version INTEGER NOT NULL DEFAULT 0;');
+    if (!columns.includes('queued_source_json')) this.db.exec('ALTER TABLE days ADD COLUMN queued_source_json TEXT;');
+    if (!columns.includes('blocked_from_status')) this.db.exec('ALTER TABLE days ADD COLUMN blocked_from_status TEXT;');
+    const locationColumns = this.db.prepare('PRAGMA table_info(locations)').all().map((column) => column.name);
+    if (!locationColumns.includes('scope_hash')) this.db.exec('ALTER TABLE locations ADD COLUMN scope_hash TEXT;');
+    for (const row of this.db.prepare(`SELECT locations.id, workspaces.realm_id FROM locations
+      JOIN workspaces ON workspaces.id = locations.workspace_id WHERE locations.scope_hash IS NULL`).all()) {
+      this.db.prepare('UPDATE locations SET scope_hash = ? WHERE id = ?').run(makeScopeHash(row.realm_id, row.id), row.id);
+    }
+    const scopeCollision = this.db.prepare(`SELECT workspace_id, scope_hash, GROUP_CONCAT(id) AS location_ids
+      FROM locations GROUP BY workspace_id, scope_hash HAVING COUNT(*) > 1 LIMIT 1`).get();
+    invariant(!scopeCollision, 'REFERENCE_SCOPE_CONFLICT', 'Existing locations collide in the QuickBooks reference scope.', {
+      workspaceId: scopeCollision?.workspace_id, scopeHash: scopeCollision?.scope_hash, locationIds: scopeCollision?.location_ids,
+    });
+    this.db.exec('CREATE UNIQUE INDEX IF NOT EXISTS one_scope_hash_per_workspace ON locations(workspace_id, scope_hash);');
     this.db.exec('INSERT OR IGNORE INTO schema_migrations(version) VALUES (2);');
+    this.db.exec('INSERT OR IGNORE INTO schema_migrations(version) VALUES (3);');
   }
 
   transaction(fn) {
@@ -128,9 +147,14 @@ export class SqliteStore {
   }
 
   createLocation({ id, workspaceId, toastLocationId, timezone, departmentRef = id }) {
+    const workspace = this.getWorkspace(workspaceId);
+    invariant(workspace, 'WORKSPACE_NOT_FOUND', 'Workspace not found.', { workspaceId });
+    const scopeHash = makeScopeHash(workspace.realmId, id);
+    const collision = this.db.prepare('SELECT id FROM locations WHERE workspace_id = ? AND scope_hash = ?').get(workspaceId, scopeHash);
+    invariant(!collision, 'REFERENCE_SCOPE_CONFLICT', 'This location would collide with an existing QuickBooks reference scope.', { locationId: id, conflictingLocationId: collision?.id, scopeHash });
     try {
-      this.db.prepare(`INSERT INTO locations(id, workspace_id, toast_location_id, timezone, department_ref, created_at)
-        VALUES (?, ?, ?, ?, ?, ?)`).run(id, workspaceId, toastLocationId, timezone, departmentRef, now());
+      this.db.prepare(`INSERT INTO locations(id, workspace_id, toast_location_id, timezone, department_ref, scope_hash, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?)`).run(id, workspaceId, toastLocationId, timezone, departmentRef, scopeHash, now());
     } catch (error) {
       throw new AppError('LOCATION_CONFLICT', 'A Toast location can belong to only one workspace.', { id, toastLocationId }, error);
     }
@@ -142,7 +166,7 @@ export class SqliteStore {
     return row ? {
       id: row.id, workspaceId: row.workspace_id, toastLocationId: row.toast_location_id,
       timezone: row.timezone, departmentRef: row.department_ref, active: Boolean(row.active),
-      syncPaused: Boolean(row.sync_paused), createdAt: row.created_at,
+      syncPaused: Boolean(row.sync_paused), scopeHash: row.scope_hash, createdAt: row.created_at,
     } : null;
   }
 
@@ -196,6 +220,12 @@ export class SqliteStore {
     return this.db.prepare('SELECT * FROM days WHERE workspace_id = ? ORDER BY business_date, location_id').all(workspaceId).map((row) => this.#day(row));
   }
 
+  listDaysByStatuses(statuses) {
+    invariant(Array.isArray(statuses) && statuses.length > 0, 'STATUS_LIST_REQUIRED', 'At least one status is required.');
+    const placeholders = statuses.map(() => '?').join(', ');
+    return this.db.prepare(`SELECT * FROM days WHERE status IN (${placeholders}) ORDER BY updated_at, id`).all(...statuses).map((row) => this.#day(row));
+  }
+
   purgeWorkspace(workspaceId) {
     return this.transaction(() => {
       const locationIds = this.db.prepare('SELECT id FROM locations WHERE workspace_id = ?').all(workspaceId).map((row) => row.id);
@@ -228,6 +258,7 @@ export class SqliteStore {
     const values = {
       source_json: patch.source ? JSON.stringify(patch.source) : JSON.stringify(current.source),
       pending_source_json: patch.pendingSource === undefined ? (current.pendingSource ? JSON.stringify(current.pendingSource) : null) : (patch.pendingSource ? JSON.stringify(patch.pendingSource) : null),
+      queued_source_json: patch.queuedSource === undefined ? (current.queuedSource ? JSON.stringify(current.queuedSource) : null) : (patch.queuedSource ? JSON.stringify(patch.queuedSource) : null),
       source_fingerprint: patch.source?.sourceFingerprint ?? current.sourceFingerprint,
       mapping_version: patch.mappingVersion === undefined ? current.mappingVersion : patch.mappingVersion,
       journal_json: patch.journal === undefined ? (current.journal ? JSON.stringify(current.journal) : null) : (patch.journal ? JSON.stringify(patch.journal) : null),
@@ -236,16 +267,17 @@ export class SqliteStore {
       reversal_qb_id: patch.reversalQbId === undefined ? current.reversalQbId : patch.reversalQbId,
       replacement_qb_id: patch.replacementQbId === undefined ? current.replacementQbId : patch.replacementQbId,
       correction_version: patch.correctionVersion === undefined ? current.correctionVersion : patch.correctionVersion,
+      blocked_from_status: patch.blockedFromStatus === undefined ? current.blockedFromStatus : patch.blockedFromStatus,
       dismissed_duplicate: patch.dismissedDuplicate === undefined ? Number(current.dismissedDuplicate) : Number(Boolean(patch.dismissedDuplicate)),
       error_code: patch.errorCode === undefined ? current.errorCode : patch.errorCode,
       error_json: patch.error === undefined ? (current.error ? JSON.stringify(current.error) : null) : (patch.error ? JSON.stringify(patch.error) : null),
     };
-    this.db.prepare(`UPDATE days SET status = ?, source_json = ?, pending_source_json = ?, source_fingerprint = ?,
+    this.db.prepare(`UPDATE days SET status = ?, source_json = ?, pending_source_json = ?, queued_source_json = ?, source_fingerprint = ?,
       mapping_version = ?, journal_json = ?, qb_journal_id = ?, qb_snapshot_json = ?, reversal_qb_id = ?,
-      replacement_qb_id = ?, correction_version = ?, dismissed_duplicate = ?, error_code = ?, error_json = ?, updated_at = ? WHERE id = ?`)
-      .run(status, values.source_json, values.pending_source_json, values.source_fingerprint, values.mapping_version,
+      replacement_qb_id = ?, correction_version = ?, blocked_from_status = ?, dismissed_duplicate = ?, error_code = ?, error_json = ?, updated_at = ? WHERE id = ?`)
+      .run(status, values.source_json, values.pending_source_json, values.queued_source_json, values.source_fingerprint, values.mapping_version,
         values.journal_json, values.qb_journal_id, values.qb_snapshot_json, values.reversal_qb_id,
-        values.replacement_qb_id, values.correction_version, values.dismissed_duplicate, values.error_code, values.error_json, now(), dayId);
+        values.replacement_qb_id, values.correction_version, values.blocked_from_status, values.dismissed_duplicate, values.error_code, values.error_json, now(), dayId);
     return this.getDay(dayId);
   }
 
@@ -263,15 +295,43 @@ export class SqliteStore {
     return row ? { id: row.id, dayId: row.day_id, idempotencyKey: row.idempotency_key, docNumber: row.doc_number, kind: row.kind, outcome: row.outcome, qbId: row.qb_id } : null;
   }
 
+  getLatestAttempt(dayId, kind, docNumber) {
+    const row = this.db.prepare(`SELECT * FROM attempts WHERE day_id = ? AND kind = ? AND doc_number = ?
+      ORDER BY updated_at DESC LIMIT 1`).get(dayId, kind, docNumber);
+    return row ? { id: row.id, dayId: row.day_id, idempotencyKey: row.idempotency_key, docNumber: row.doc_number, kind: row.kind, outcome: row.outcome, qbId: row.qb_id } : null;
+  }
+
+  listAttempts(dayId) {
+    return this.db.prepare('SELECT * FROM attempts WHERE day_id = ? ORDER BY created_at, id').all(dayId).map((row) => ({
+      id: row.id, dayId: row.day_id, idempotencyKey: row.idempotency_key, docNumber: row.doc_number,
+      kind: row.kind, outcome: row.outcome, qbId: row.qb_id, createdAt: row.created_at, updatedAt: row.updated_at,
+    }));
+  }
+
+  claimAttempt({ dayId, idempotencyKey, docNumber, kind }) {
+    return this.transaction(() => {
+      const existing = this.getAttempt(idempotencyKey);
+      if (!existing) {
+        const attempt = this.recordAttempt({ dayId, idempotencyKey, docNumber, kind, outcome: 'STARTED' });
+        return { claimed: true, attempt };
+      }
+      if (['NOT_FOUND', 'FAILED'].includes(existing.outcome)) {
+        const attempt = this.recordAttempt({ dayId, idempotencyKey, docNumber, kind, outcome: 'STARTED' });
+        return { claimed: true, attempt };
+      }
+      return { claimed: false, attempt: existing };
+    });
+  }
+
   #day(row) {
     if (!row) return null;
     return {
       id: row.id, workspaceId: row.workspace_id, realmId: row.realm_id, locationId: row.location_id,
       businessDate: row.business_date, sourceFingerprint: row.source_fingerprint,
-      source: parse(row.source_json), pendingSource: parse(row.pending_source_json), status: row.status,
+      source: parse(row.source_json), pendingSource: parse(row.pending_source_json), queuedSource: parse(row.queued_source_json), status: row.status,
       mappingVersion: row.mapping_version, journal: parse(row.journal_json), qbJournalId: row.qb_journal_id,
       qbSnapshot: parse(row.qb_snapshot_json), reversalQbId: row.reversal_qb_id,
-      replacementQbId: row.replacement_qb_id, correctionVersion: row.correction_version,
+      replacementQbId: row.replacement_qb_id, correctionVersion: row.correction_version, blockedFromStatus: row.blocked_from_status,
       dismissedDuplicate: Boolean(row.dismissed_duplicate),
       errorCode: row.error_code, error: parse(row.error_json), createdAt: row.created_at, updatedAt: row.updated_at,
     };

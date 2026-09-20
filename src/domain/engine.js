@@ -1,46 +1,74 @@
 import { evaluateEntitlement } from '../billing/entitlements.js';
 import { stableStringify } from './canonical.js';
-import { AppError, UnknownWriteOutcomeError, invariant, toSafeError } from './errors.js';
+import { UnknownWriteOutcomeError, invariant, toSafeError } from './errors.js';
 import { buildJournal, journalsEquivalent } from './journal.js';
 import { normalizeSource, sourceIdentity } from './normalize.js';
 import { makeIdempotencyKey } from './reference.js';
 import { DayStatus } from './state-machine.js';
 
 const POSTED = new Set([DayStatus.POSTED, DayStatus.ALREADY_POSTED, DayStatus.CORRECTED]);
+const CORRECTION_IN_FLIGHT = new Set([DayStatus.CORRECTING, DayStatus.CORRECTION_PARTIAL]);
+const ORIGINAL_WRITE_IN_FLIGHT = new Set([DayStatus.POSTING, DayStatus.OUTCOME_UNKNOWN]);
 
 export class SyncEngine {
-  constructor({ store, quickBooks, clock = () => new Date().toISOString() }) {
+  constructor({ store, quickBooks, clock = () => new Date().toISOString(), recoverOnStart = true }) {
     this.store = store;
     this.quickBooks = quickBooks;
     this.clock = clock;
+    if (recoverOnStart) this.recoverInterruptedWrites();
   }
 
   ingest(rawSource) {
     const source = normalizeSource(rawSource);
     this.#assertScope(source);
     const existing = this.store.getDayByIdentity(sourceIdentity(source));
-    if (existing && existing.sourceFingerprint === source.sourceFingerprint) return existing;
+    if (existing && [existing.source, existing.pendingSource, existing.queuedSource]
+      .some((candidate) => candidate?.sourceFingerprint === source.sourceFingerprint)) return existing;
     if (existing && POSTED.has(existing.status)) {
       return this.store.transition(existing.id, DayStatus.CORRECTION_REQUIRED, {
-        pendingSource: source, reversalQbId: null, replacementQbId: null, errorCode: null, error: null,
+        pendingSource: source, queuedSource: null, reversalQbId: null, replacementQbId: null, errorCode: null, error: null,
+      });
+    }
+    if (existing?.status === DayStatus.CORRECTION_REQUIRED) {
+      return this.store.transition(existing.id, DayStatus.CORRECTION_REQUIRED, {
+        pendingSource: source, queuedSource: null, reversalQbId: null, replacementQbId: null, errorCode: null, error: null,
+      });
+    }
+    if (existing && (CORRECTION_IN_FLIGHT.has(existing.status) || ORIGINAL_WRITE_IN_FLIGHT.has(existing.status))) {
+      return this.store.transition(existing.id, existing.status, { queuedSource: source });
+    }
+    if (existing?.status === DayStatus.EXTERNAL_CHANGE) {
+      return this.store.transition(existing.id, DayStatus.EXTERNAL_CHANGE, { pendingSource: source });
+    }
+    if (existing?.status === DayStatus.ENTITLEMENT_BLOCKED
+      && [DayStatus.CORRECTION_REQUIRED, DayStatus.CORRECTION_PARTIAL].includes(existing.blockedFromStatus)) {
+      return this.store.transition(existing.id, DayStatus.ENTITLEMENT_BLOCKED, {
+        pendingSource: existing.blockedFromStatus === DayStatus.CORRECTION_REQUIRED ? source : existing.pendingSource,
+        queuedSource: existing.blockedFromStatus === DayStatus.CORRECTION_PARTIAL ? source : null,
       });
     }
 
     const mapping = this.store.getMapping(source.locationId);
     if (!mapping) {
-      if (existing) return this.store.transition(existing.id, DayStatus.NEEDS_MAPPING, { source, journal: null, errorCode: 'UNMAPPED_CATEGORY' });
+      if (existing) return this.store.transition(existing.id, DayStatus.NEEDS_MAPPING, {
+        source, pendingSource: null, queuedSource: null, journal: null, errorCode: 'UNMAPPED_CATEGORY',
+      });
       return this.store.createDay(source, DayStatus.NEEDS_MAPPING);
     }
 
     try {
       const journal = buildJournal(source, mapping);
-      if (existing) return this.store.transition(existing.id, DayStatus.READY_FOR_REVIEW, { source, journal, mappingVersion: mapping.version, errorCode: null, error: null });
+      if (existing) return this.store.transition(existing.id, DayStatus.READY_FOR_REVIEW, {
+        source, pendingSource: null, queuedSource: null, journal, mappingVersion: mapping.version, errorCode: null, error: null,
+      });
       return this.store.createDay(source, DayStatus.READY_FOR_REVIEW, journal);
     } catch (error) {
       const safe = toSafeError(error);
       if (!['UNMAPPED_CATEGORY', 'UNBALANCED_JOURNAL', 'INACTIVE_ACCOUNT'].includes(safe.code)) throw error;
       const status = safe.code === 'UNMAPPED_CATEGORY' ? DayStatus.NEEDS_MAPPING : DayStatus.INVALID_SOURCE;
-      if (existing) return this.store.transition(existing.id, status, { source, journal: null, mappingVersion: mapping.version, errorCode: safe.code, error: safe });
+      if (existing) return this.store.transition(existing.id, status, {
+        source, pendingSource: null, queuedSource: null, journal: null, mappingVersion: mapping.version, errorCode: safe.code, error: safe,
+      });
       const day = this.store.createDay(source, status);
       return this.store.transition(day.id, status, { mappingVersion: mapping.version, errorCode: safe.code, error: safe });
     }
@@ -51,7 +79,7 @@ export class SyncEngine {
     const mapping = this.store.getMapping(day.locationId);
     invariant(mapping, 'MAPPING_REQUIRED', 'A mapping must be approved before preview.');
     const journal = buildJournal(day.source, mapping);
-    if (day.status === DayStatus.NEEDS_MAPPING || day.status === DayStatus.INVALID_SOURCE || day.status === DayStatus.FAILED || day.status === DayStatus.PAUSED || day.status === DayStatus.ENTITLEMENT_BLOCKED) {
+    if (day.status === DayStatus.NEEDS_MAPPING || day.status === DayStatus.INVALID_SOURCE || day.status === DayStatus.FAILED || day.status === DayStatus.PAUSED) {
       return this.store.transition(day.id, DayStatus.READY_FOR_REVIEW, { journal, mappingVersion: mapping.version, errorCode: null, error: null });
     }
     if (day.status === DayStatus.READY_FOR_REVIEW) return this.store.transition(day.id, DayStatus.READY_FOR_REVIEW, { journal, mappingVersion: mapping.version, errorCode: null, error: null });
@@ -61,10 +89,15 @@ export class SyncEngine {
   post(dayId, { behavior } = {}) {
     let day = this.#day(dayId);
     if (POSTED.has(day.status)) return day;
-    if (day.status === DayStatus.ENTITLEMENT_BLOCKED) day = this.preview(day.id);
+    if (day.status === DayStatus.ENTITLEMENT_BLOCKED) {
+      const restored = this.#restoreEntitlementBlocked(day);
+      if (restored.status === DayStatus.ENTITLEMENT_BLOCKED) return restored;
+      day = restored;
+    }
     invariant(day.status === DayStatus.READY_FOR_REVIEW || day.status === DayStatus.OUTCOME_UNKNOWN || day.status === DayStatus.FAILED,
       'DAY_NOT_POSTABLE', 'Only a reviewed unposted day can be posted.', { status: day.status });
-    this.#assertEntitlement(day.workspaceId, day.locationId);
+    const blocked = this.#persistEntitlementBlock(day);
+    if (blocked) return blocked;
     const journal = day.journal ?? this.preview(day.id).journal;
     const idempotencyKey = makeIdempotencyKey({ ...sourceIdentity(day.source), kind: 'ORIGINAL', sourceFingerprint: day.sourceFingerprint, mappingVersion: journal.mappingVersion });
 
@@ -75,9 +108,7 @@ export class SyncEngine {
           errorCode: 'REFERENCE_COLLISION', error: { code: 'REFERENCE_COLLISION', candidateId: exact.id },
         });
       }
-      return this.store.transition(day.id, DayStatus.ALREADY_POSTED, {
-        qbJournalId: exact.id, qbSnapshot: exact, errorCode: null, error: null,
-      });
+      return this.#completeOriginalPost(day, DayStatus.ALREADY_POSTED, exact);
     }
     if (!day.dismissedDuplicate) {
       const equivalent = this.quickBooks.findEquivalent(journal, { excludeDocNumber: journal.docNumber });
@@ -88,17 +119,34 @@ export class SyncEngine {
       }
     }
 
+    const claim = this.store.claimAttempt({ dayId: day.id, idempotencyKey, docNumber: journal.docNumber, kind: 'ORIGINAL' });
+    if (!claim.claimed) {
+      if (['COMMITTED', 'RECOVERED'].includes(claim.attempt.outcome)) {
+        const recorded = claim.attempt.qbId ? this.quickBooks.getJournal(claim.attempt.qbId) : this.quickBooks.findByDocNumber(journal.docNumber);
+        if (recorded && recorded.journal.privateNote === journal.privateNote && journalsEquivalent(recorded.journal, journal)) {
+          if (day.status !== DayStatus.OUTCOME_UNKNOWN) day = this.store.transition(day.id, DayStatus.OUTCOME_UNKNOWN, {
+            errorCode: 'OUTCOME_UNKNOWN', error: { code: 'OUTCOME_UNKNOWN', message: 'A durable write attempt is being reconciled.' },
+          });
+          return this.#completeOriginalPost(day, DayStatus.POSTED, recorded);
+        }
+      }
+      if (day.status !== DayStatus.OUTCOME_UNKNOWN) day = this.store.transition(day.id, DayStatus.OUTCOME_UNKNOWN, {
+        errorCode: 'OUTCOME_UNKNOWN', error: { code: 'OUTCOME_UNKNOWN', message: 'A durable write attempt must be reconciled before retry.' },
+      });
+      return this.recover(day.id);
+    }
+
     day = this.store.transition(day.id, DayStatus.POSTING, { errorCode: null, error: null });
-    this.store.recordAttempt({ dayId: day.id, idempotencyKey, docNumber: journal.docNumber, kind: 'ORIGINAL', outcome: 'STARTED' });
     try {
       const created = this.quickBooks.createJournal(journal, { idempotencyKey, behavior });
       this.store.recordAttempt({ dayId: day.id, idempotencyKey, docNumber: journal.docNumber, kind: 'ORIGINAL', outcome: 'COMMITTED', qbId: created.id });
-      return this.store.transition(day.id, DayStatus.POSTED, { qbJournalId: created.id, qbSnapshot: created });
+      return this.#completeOriginalPost(day, DayStatus.POSTED, created);
     } catch (error) {
       if (!(error instanceof UnknownWriteOutcomeError)) {
         this.store.recordAttempt({ dayId: day.id, idempotencyKey, docNumber: journal.docNumber, kind: 'ORIGINAL', outcome: 'FAILED' });
         return this.store.transition(day.id, DayStatus.FAILED, { errorCode: error.code ?? 'QUICKBOOKS_ERROR', error: toSafeError(error) });
       }
+      this.store.recordAttempt({ dayId: day.id, idempotencyKey, docNumber: journal.docNumber, kind: 'ORIGINAL', outcome: 'UNKNOWN' });
       day = this.store.transition(day.id, DayStatus.OUTCOME_UNKNOWN, { errorCode: error.code, error: toSafeError(error) });
       return this.recover(day.id);
     }
@@ -108,11 +156,30 @@ export class SyncEngine {
     const day = this.#day(dayId);
     invariant(day.status === DayStatus.OUTCOME_UNKNOWN, 'RECOVERY_NOT_REQUIRED', 'This day has no uncertain write to recover.');
     const found = this.quickBooks.findByDocNumber(day.journal.docNumber);
+    const attempt = this.store.getLatestAttempt(day.id, 'ORIGINAL', day.journal.docNumber);
     if (found && found.journal.privateNote === day.journal.privateNote && journalsEquivalent(found.journal, day.journal)) {
-      return this.store.transition(day.id, DayStatus.POSTED, { qbJournalId: found.id, qbSnapshot: found, errorCode: null, error: null });
+      if (attempt) this.store.recordAttempt({ ...attempt, outcome: 'RECOVERED', qbId: found.id });
+      return this.#completeOriginalPost(day, DayStatus.POSTED, found);
     }
-    if (found) return this.store.transition(day.id, DayStatus.FAILED, { errorCode: 'REFERENCE_COLLISION', error: { code: 'REFERENCE_COLLISION', candidateId: found.id } });
+    if (found) {
+      if (attempt) this.store.recordAttempt({ ...attempt, outcome: 'FAILED' });
+      return this.store.transition(day.id, DayStatus.FAILED, { errorCode: 'REFERENCE_COLLISION', error: { code: 'REFERENCE_COLLISION', candidateId: found.id } });
+    }
+    if (attempt) this.store.recordAttempt({ ...attempt, outcome: 'NOT_FOUND' });
     return this.store.transition(day.id, DayStatus.READY_FOR_REVIEW, { errorCode: null, error: null });
+  }
+
+  recoverInterruptedWrites() {
+    const recovered = [];
+    for (let day of this.store.listDaysByStatuses([DayStatus.POSTING, DayStatus.OUTCOME_UNKNOWN])) {
+      if (day.status === DayStatus.POSTING) {
+        day = this.store.transition(day.id, DayStatus.OUTCOME_UNKNOWN, {
+          errorCode: 'INTERRUPTED_WRITE', error: { code: 'INTERRUPTED_WRITE', message: 'The process stopped while a QuickBooks write was in progress.' },
+        });
+      }
+      recovered.push(this.recover(day.id));
+    }
+    return recovered;
   }
 
   dismissDuplicate(dayId) {
@@ -132,9 +199,15 @@ export class SyncEngine {
 
   correct(dayId, { reversalBehavior, replacementBehavior } = {}) {
     let day = this.#day(dayId);
+    if (day.status === DayStatus.ENTITLEMENT_BLOCKED) {
+      const restored = this.#restoreEntitlementBlocked(day);
+      if (restored.status === DayStatus.ENTITLEMENT_BLOCKED) return restored;
+      day = restored;
+    }
     invariant([DayStatus.CORRECTION_REQUIRED, DayStatus.CORRECTION_PARTIAL].includes(day.status), 'CORRECTION_NOT_REQUIRED', 'This day does not need a correction.');
     invariant(day.pendingSource, 'CORRECTION_SOURCE_REQUIRED', 'The replacement source is missing.');
-    this.#assertEntitlement(day.workspaceId, day.locationId);
+    const blocked = this.#persistEntitlementBlock(day);
+    if (blocked) return blocked;
 
     const liveOriginal = this.quickBooks.getJournal(day.qbJournalId);
     if (!liveOriginal || stableStringify(liveOriginal.journal) !== stableStringify(day.qbSnapshot?.journal)) {
@@ -148,8 +221,8 @@ export class SyncEngine {
     invariant(originalMapping && currentMapping, 'MAPPING_REQUIRED', 'Both original and current mapping versions are required for correction.');
     const correctionVersion = day.status === DayStatus.CORRECTION_PARTIAL ? day.correctionVersion : day.correctionVersion + 1;
     invariant(correctionVersion <= 49, 'CORRECTION_LIMIT', 'This location-day has reached the supported correction limit.');
-    const reversal = buildJournal(day.source, originalMapping, { sequence: correctionVersion * 2 - 1, reverse: true });
-    const replacement = buildJournal(day.pendingSource, currentMapping, { sequence: correctionVersion * 2 });
+    const reversal = buildJournal(day.source, originalMapping, { sequence: correctionVersion * 2 - 1, reverse: true, kind: 'REVERSAL' });
+    const replacement = buildJournal(day.pendingSource, currentMapping, { sequence: correctionVersion * 2, kind: 'REPLACEMENT' });
     if (day.status !== DayStatus.CORRECTING) day = this.store.transition(day.id, DayStatus.CORRECTING, { correctionVersion });
 
     let reversalRecord = day.reversalQbId ? this.quickBooks.getJournal(day.reversalQbId) : null;
@@ -159,7 +232,11 @@ export class SyncEngine {
       });
     }
     if (!reversalRecord) {
-      reversalRecord = this.#writeCorrection(day, reversal, 'REVERSAL', reversalBehavior);
+      try {
+        reversalRecord = this.#writeCorrection(day, reversal, 'REVERSAL', reversalBehavior);
+      } catch (error) {
+        return this.store.transition(day.id, DayStatus.CORRECTION_PARTIAL, { errorCode: error.code ?? 'QUICKBOOKS_ERROR', error: toSafeError(error) });
+      }
       if (!reversalRecord) return this.store.transition(day.id, DayStatus.CORRECTION_PARTIAL, { errorCode: 'OUTCOME_UNKNOWN' });
       day = this.store.transition(day.id, DayStatus.CORRECTION_PARTIAL, { reversalQbId: reversalRecord.id, errorCode: null, error: null });
     }
@@ -167,14 +244,26 @@ export class SyncEngine {
     if (day.status !== DayStatus.CORRECTING) day = this.store.transition(day.id, DayStatus.CORRECTING);
     let replacementRecord = day.replacementQbId ? this.quickBooks.getJournal(day.replacementQbId) : null;
     if (!replacementRecord) {
-      replacementRecord = this.#writeCorrection(day, replacement, 'REPLACEMENT', replacementBehavior);
+      try {
+        replacementRecord = this.#writeCorrection(day, replacement, 'REPLACEMENT', replacementBehavior);
+      } catch (error) {
+        return this.store.transition(day.id, DayStatus.CORRECTION_PARTIAL, { errorCode: error.code ?? 'QUICKBOOKS_ERROR', error: toSafeError(error) });
+      }
       if (!replacementRecord) return this.store.transition(day.id, DayStatus.CORRECTION_PARTIAL, { errorCode: 'OUTCOME_UNKNOWN' });
     }
-    return this.store.transition(day.id, DayStatus.CORRECTED, {
-      source: day.pendingSource, pendingSource: null, journal: replacement, mappingVersion: currentMapping.version,
+    day = this.#day(day.id);
+    const queuedSource = day.queuedSource;
+    let completed = this.store.transition(day.id, DayStatus.CORRECTED, {
+      source: day.pendingSource, pendingSource: null, queuedSource: null, journal: replacement, mappingVersion: currentMapping.version,
       qbJournalId: replacementRecord.id, qbSnapshot: replacementRecord, reversalQbId: reversalRecord.id,
       replacementQbId: replacementRecord.id, errorCode: null, error: null,
     });
+    if (queuedSource && queuedSource.sourceFingerprint !== completed.sourceFingerprint) {
+      completed = this.store.transition(day.id, DayStatus.CORRECTION_REQUIRED, {
+        pendingSource: queuedSource, reversalQbId: null, replacementQbId: null,
+      });
+    }
+    return completed;
   }
 
   auditPostedDay(dayId) {
@@ -195,13 +284,29 @@ export class SyncEngine {
         'REFERENCE_COLLISION', 'A QuickBooks journal uses the correction reference with different accounting content.');
       return exact;
     }
-    this.store.recordAttempt({ dayId: day.id, idempotencyKey, docNumber: journal.docNumber, kind, outcome: 'STARTED' });
+    const claim = this.store.claimAttempt({ dayId: day.id, idempotencyKey, docNumber: journal.docNumber, kind });
+    if (!claim.claimed) {
+      if (['COMMITTED', 'RECOVERED'].includes(claim.attempt.outcome) && claim.attempt.qbId) {
+        const recorded = this.quickBooks.getJournal(claim.attempt.qbId);
+        if (recorded) {
+          invariant(recorded.journal.privateNote === journal.privateNote && journalsEquivalent(recorded.journal, journal),
+            'REFERENCE_COLLISION', 'Recorded QuickBooks correction differs from the expected journal.');
+          return recorded;
+        }
+      }
+      this.store.recordAttempt({ ...claim.attempt, outcome: 'NOT_FOUND' });
+      const retry = this.store.claimAttempt({ dayId: day.id, idempotencyKey, docNumber: journal.docNumber, kind });
+      invariant(retry.claimed, 'ATTEMPT_CLAIM_FAILED', 'A reconciled correction attempt could not be reclaimed.');
+    }
     try {
       const record = this.quickBooks.createJournal(journal, { idempotencyKey, behavior });
       this.store.recordAttempt({ dayId: day.id, idempotencyKey, docNumber: journal.docNumber, kind, outcome: 'COMMITTED', qbId: record.id });
       return record;
     } catch (error) {
-      if (!(error instanceof UnknownWriteOutcomeError)) throw error;
+      if (!(error instanceof UnknownWriteOutcomeError)) {
+        this.store.recordAttempt({ dayId: day.id, idempotencyKey, docNumber: journal.docNumber, kind, outcome: 'FAILED' });
+        throw error;
+      }
       const recovered = this.quickBooks.findByDocNumber(journal.docNumber);
       this.store.recordAttempt({ dayId: day.id, idempotencyKey, docNumber: journal.docNumber, kind, outcome: recovered ? 'RECOVERED' : 'UNKNOWN', qbId: recovered?.id });
       if (recovered) invariant(recovered.journal.privateNote === journal.privateNote && journalsEquivalent(recovered.journal, journal),
@@ -220,14 +325,44 @@ export class SyncEngine {
     invariant(location.timezone === source.timezone, 'TIMEZONE_MISMATCH', 'Source time zone does not match the location.');
   }
 
-  #assertEntitlement(workspaceId, locationId) {
+  #entitlementResult(workspaceId, locationId) {
     const location = this.store.getLocation(locationId);
     invariant(location?.active, 'LOCATION_INACTIVE', 'Posting is unavailable because the location is inactive.');
     invariant(!location.syncPaused, 'SYNC_PAUSED', 'Posting is unavailable because sync is paused for this location.');
     const entitlement = this.store.getEntitlement(workspaceId);
     invariant(entitlement, 'ENTITLEMENT_REQUIRED', 'Workspace entitlement is missing.');
-    const result = evaluateEntitlement(entitlement, this.clock());
-    if (!result.canPost) throw new AppError('ENTITLEMENT_BLOCKED', 'Posting is not permitted by the current entitlement.', { reason: result.reason, effectiveStatus: result.effectiveStatus });
+    return evaluateEntitlement(entitlement, this.clock());
+  }
+
+  #persistEntitlementBlock(day) {
+    const result = this.#entitlementResult(day.workspaceId, day.locationId);
+    if (result.canPost) return null;
+    return this.store.transition(day.id, DayStatus.ENTITLEMENT_BLOCKED, {
+      blockedFromStatus: day.status,
+      errorCode: 'ENTITLEMENT_BLOCKED',
+      error: { code: 'ENTITLEMENT_BLOCKED', message: 'Posting is not permitted by the current entitlement.', details: { reason: result.reason, effectiveStatus: result.effectiveStatus } },
+    });
+  }
+
+  #restoreEntitlementBlocked(day) {
+    const result = this.#entitlementResult(day.workspaceId, day.locationId);
+    if (!result.canPost) return day;
+    const target = day.blockedFromStatus ?? DayStatus.READY_FOR_REVIEW;
+    return this.store.transition(day.id, target, { blockedFromStatus: null, errorCode: null, error: null });
+  }
+
+  #completeOriginalPost(day, status, record) {
+    let completed = this.store.transition(day.id, status, {
+      qbJournalId: record.id, qbSnapshot: record, errorCode: null, error: null,
+    });
+    if (completed.queuedSource && completed.queuedSource.sourceFingerprint !== completed.sourceFingerprint) {
+      completed = this.store.transition(completed.id, DayStatus.CORRECTION_REQUIRED, {
+        pendingSource: completed.queuedSource, queuedSource: null, reversalQbId: null, replacementQbId: null,
+      });
+    } else if (completed.queuedSource) {
+      completed = this.store.transition(completed.id, completed.status, { queuedSource: null });
+    }
+    return completed;
   }
 
   #day(dayId) {

@@ -12,6 +12,9 @@ import { deleteWorkspace } from '../src/security/deletion.js';
 import { SqliteStore } from '../src/persistence/sqlite-store.js';
 import { FakeQuickBooks } from '../src/adapters/fake-quickbooks.js';
 import { SyncEngine } from '../src/domain/engine.js';
+import { makeIdempotencyKey } from '../src/domain/reference.js';
+import { sourceIdentity } from '../src/domain/normalize.js';
+import { DayStatus } from '../src/domain/state-machine.js';
 import { fixture, setup } from './helpers.js';
 
 test('T-TRIAL: no-card trial lasts exactly 14 days and does not auto-convert', () => {
@@ -76,6 +79,53 @@ test('T-PERSISTENCE-RESTART: durable posting state prevents a duplicate after re
   assert.equal(quickBooks.writeCount, 1);
   store.close();
   rmSync(directory, { recursive: true });
+});
+
+test('T-INTERRUPTED-WRITE: startup reconciles a committed POSTING row without another write', () => {
+  const directory = mkdtempSync(join(tmpdir(), 'rsq-interrupted-'));
+  const database = join(directory, 'state.sqlite');
+  const source = fixture('us-day.json');
+  const mapping = fixture('us-mapping.json');
+  const quickBooks = new FakeQuickBooks();
+  let store = new SqliteStore(database);
+  store.createWorkspace({ id: source.workspaceId, realmId: source.realmId, country: source.country, currency: source.currency });
+  store.createLocation({ id: source.locationId, workspaceId: source.workspaceId, toastLocationId: 'toast-interrupted', timezone: source.timezone });
+  store.saveMapping(source.locationId, mapping);
+  store.putEntitlement(source.workspaceId, { status: 'PAID', syncPaused: false });
+  const engine = new SyncEngine({ store, quickBooks, recoverOnStart: false });
+  const day = engine.ingest(source);
+  const idempotencyKey = makeIdempotencyKey({
+    ...sourceIdentity(day.source), kind: 'ORIGINAL', sourceFingerprint: day.sourceFingerprint, mappingVersion: day.journal.mappingVersion,
+  });
+  store.claimAttempt({ dayId: day.id, idempotencyKey, docNumber: day.journal.docNumber, kind: 'ORIGINAL' });
+  store.transition(day.id, DayStatus.POSTING);
+  quickBooks.createJournal(day.journal, { idempotencyKey });
+  store.close();
+
+  store = new SqliteStore(database);
+  new SyncEngine({ store, quickBooks });
+  const recovered = store.getDay(day.id);
+  assert.equal(recovered.status, DayStatus.POSTED);
+  assert.equal(quickBooks.writeCount, 1);
+  assert.equal(store.listAttempts(day.id).at(-1).outcome, 'RECOVERED');
+  store.close();
+  rmSync(directory, { recursive: true });
+});
+
+test('T-INTERRUPTED-WRITE: startup safely releases a POSTING row when no journal exists', () => {
+  const { source, store, quickBooks, engine } = setup();
+  const day = engine.ingest(source);
+  const idempotencyKey = makeIdempotencyKey({
+    ...sourceIdentity(day.source), kind: 'ORIGINAL', sourceFingerprint: day.sourceFingerprint, mappingVersion: day.journal.mappingVersion,
+  });
+  store.claimAttempt({ dayId: day.id, idempotencyKey, docNumber: day.journal.docNumber, kind: 'ORIGINAL' });
+  store.transition(day.id, DayStatus.POSTING);
+  const restarted = new SyncEngine({ store, quickBooks });
+  assert.equal(store.getDay(day.id).status, DayStatus.READY_FOR_REVIEW);
+  assert.equal(store.listAttempts(day.id).at(-1).outcome, 'NOT_FOUND');
+  assert.equal(restarted.post(day.id).status, DayStatus.POSTED);
+  assert.equal(quickBooks.writeCount, 1);
+  store.close();
 });
 
 test('T-DELETION: external credentials revoke before primary data purge', () => {

@@ -4,9 +4,10 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { normalizeSource } from '../src/domain/normalize.js';
 import { buildJournal } from '../src/domain/journal.js';
-import { makeDocNumber } from '../src/domain/reference.js';
+import { makeDocNumber, makeScopeHash } from '../src/domain/reference.js';
 import { assertTransition, DayStatus } from '../src/domain/state-machine.js';
 import { parseCsvSource, toCsvSource, MAX_CSV_BYTES } from '../src/adapters/csv.js';
+import { SqliteStore } from '../src/persistence/sqlite-store.js';
 import { fixture, setup } from './helpers.js';
 
 test('T-NORMALIZE: canonical input is sorted, frozen, and fingerprinted', () => {
@@ -88,6 +89,27 @@ test('T-CSV-LIMITS: changed headers and oversized files reject', () => {
   assert.throws(() => parseCsvSource(Buffer.alloc(MAX_CSV_BYTES + 1, 65)), { code: 'CSV_TOO_LARGE' });
 });
 
+test('T-CSV-ESCAPING: commas, quotes, newlines, and formula prefixes round-trip safely', () => {
+  const input = fixture('us-day.json');
+  input.workspaceId = '=workspace,"quoted"';
+  input.restaurantId = "'=restaurant";
+  input.sourceVersion = 'close\nrevision';
+  const normalized = normalizeSource(input);
+  const csv = toCsvSource(normalized);
+  assert.match(csv, /"'=workspace,""quoted"""/);
+  const reparsed = parseCsvSource(csv);
+  assert.equal(reparsed.sourceFingerprint, normalized.sourceFingerprint);
+  assert.equal(reparsed.workspaceId, input.workspaceId);
+  assert.equal(reparsed.restaurantId, input.restaurantId);
+  assert.equal(reparsed.sourceVersion, input.sourceVersion);
+});
+
+test('T-CSV-STRICT: trailing characters after a quoted field fail closed', () => {
+  const valid = readFileSync(join(process.cwd(), 'fixtures', 'us-day.csv'), 'utf8');
+  assert.throws(() => parseCsvSource(valid.replace('toast-close-1', '"toast-close-1"garbage')), { code: 'MALFORMED_CSV' });
+  assert.throws(() => parseCsvSource(valid.replace('toast-close-1', 'toast"close-1')), { code: 'MALFORMED_CSV' });
+});
+
 test('T-STATE-MACHINE: illegal state transitions fail closed', () => {
   assert.equal(assertTransition(DayStatus.READY_FOR_REVIEW, DayStatus.POSTING), DayStatus.POSTING);
   assert.throws(() => assertTransition(DayStatus.POSTED, DayStatus.READY_FOR_REVIEW), { code: 'ILLEGAL_STATE_TRANSITION' });
@@ -125,5 +147,16 @@ test('T-REALM-ISOLATION and T-LOCATION-UNIQUENESS: persistence constraints isola
   assert.throws(() => store.createLocation({ id: 'other-location', workspaceId: 'other', toastLocationId: `toast-${source.locationId}`, timezone: source.timezone }), { code: 'LOCATION_CONFLICT' });
   store.setLocationActive(source.locationId, false);
   assert.equal(store.createLocation({ id: 'other-location', workspaceId: 'other', toastLocationId: `toast-${source.locationId}`, timezone: source.timezone }).workspaceId, 'other');
+  store.close();
+});
+
+test('T-REFERENCE-SCOPE: a known 32-bit location hash collision is rejected at setup', () => {
+  assert.equal(makeScopeHash('collision-realm', 'location-60347'), makeScopeHash('collision-realm', 'location-73525'));
+  const store = new SqliteStore();
+  store.createWorkspace({ id: 'collision-workspace', realmId: 'collision-realm', country: 'US', currency: 'USD' });
+  store.createLocation({ id: 'location-60347', workspaceId: 'collision-workspace', toastLocationId: 'toast-a', timezone: 'America/New_York' });
+  assert.throws(() => store.createLocation({
+    id: 'location-73525', workspaceId: 'collision-workspace', toastLocationId: 'toast-b', timezone: 'America/New_York',
+  }), { code: 'REFERENCE_SCOPE_CONFLICT' });
   store.close();
 });

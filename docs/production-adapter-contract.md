@@ -17,7 +17,7 @@ Required behavior:
 
 A production QuickBooks adapter must implement the behavior exercised by `FakeQuickBooks`:
 
-- create a locked journal with a caller-supplied idempotency key;
+- create a locked journal with the engine idempotency key sent as QuickBooks Online's caller-supplied `requestid` query parameter;
 - read a journal by ID;
 - find an exact journal by deterministic `DocNumber`;
 - find accounting-equivalent journals by date, transaction-level location and normalized lines;
@@ -25,7 +25,9 @@ A production QuickBooks adapter must implement the behavior exercised by `FakeQu
 - honor rate limits and refresh credentials without changing the payload;
 - preserve `TxnDate`, `DocNumber`, `PrivateNote`, transaction `DepartmentRef`, line `ClassRef`, accounts, directions and amounts.
 
-The adapter must never blindly retry a create after a timeout. The engine's reference query runs first.
+Intuit documents `requestid` as unique per company file and recommends it to prevent duplicate transactions. The adapter must still never blindly retry a create after a timeout: the engine durably claims the attempt first and queries the deterministic `DocNumber` before it permits another write. The local attempt ledger, `requestid`, `DocNumber`, and `PrivateNote` are independent layers; production safety must not depend on the simulator's in-memory map.
+
+Reference: <https://developer.intuit.com/app/developer/qbo/docs/learn/learn-basic-field-definitions>
 
 ## OAuth and credentials
 

@@ -1,6 +1,6 @@
 {
   "name": "restaurant-sales-sync-for-quickbooks",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": true,
   "type": "module",
   "description": "Deterministic Toast-to-QuickBooks daily sales journal engine and diagnostic harness.",

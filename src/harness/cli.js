@@ -60,12 +60,8 @@ const scenarios = {
   'trial-expired': () => {
     const context = createHarness({ entitlement: { status: 'TRIAL', trialStartedAt: '2026-09-01T00:00:00.000Z', trialEndsAt: '2026-09-15T00:00:00.000Z', syncPaused: false } });
     const day = context.engine.ingest(context.source);
-    try {
-      context.engine.post(day.id);
-      throw new Error('Expected entitlement block.');
-    } catch (error) {
-      return { scenario: 'trial-expired', status: 'ENTITLEMENT_BLOCKED', error: { code: error.code, reason: error.details?.reason }, externalWrites: context.quickBooks.writeCount };
-    }
+    const blocked = context.engine.post(day.id);
+    return { scenario: 'trial-expired', status: blocked.status, error: blocked.error, externalWrites: context.quickBooks.writeCount };
   },
   'locale-switch': () => {
     const context = createHarness({ market: 'CA' });

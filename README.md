@@ -44,9 +44,13 @@ Use `--locale en-US`, `en-CA`, `es-US` or `fr-CA` after a scenario command to ch
 - Debits must equal credits exactly; the engine never creates a plug.
 - One workspace belongs to one QuickBooks realm.
 - A stable 21-character reference identifies every write.
-- A timed-out write is queried before retry.
+- Every write is claimed in the durable attempt ledger and uses a QuickBooks `requestid` plus a stable `DocNumber`.
+- Timed-out and process-interrupted writes are queried before retry, including stale `POSTING` rows recovered at startup.
+- Colliding shortened reference scopes are rejected when a location is created.
 - An existing unreferenced equivalent journal blocks as a possible duplicate.
 - External edits or deletion block automated correction.
+- New source revisions replace an unstarted correction or queue behind one already in flight.
+- Billing-denied writes persist as `ENTITLEMENT_BLOCKED` and resume from their prior state after entitlement returns.
 - Posted records retain their source fingerprint and mapping version.
 - Locale changes never translate or mutate restaurant or accounting data.
 

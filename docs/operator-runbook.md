@@ -18,10 +18,12 @@ npm run gate
 
 1. Find the workspace, location and business date; never search by account name alone.
 2. Read the primary day state and most recent attempt.
-3. For `OUTCOME_UNKNOWN`, query QuickBooks by the stored stable reference before permitting another write.
-4. For `POSSIBLE_DUPLICATE`, require the user to adopt an accounting-equivalent journal or explicitly dismiss it.
-5. For `EXTERNAL_CHANGE`, stop automation. Do not recreate, edit or delete the external journal.
-6. For `CORRECTION_PARTIAL`, preserve the confirmed reversal and resume only the missing replacement.
+3. For `POSTING` left behind by a process stop, restart the engine normally. Startup changes it to `OUTCOME_UNKNOWN` and queries QuickBooks by the stored stable reference.
+4. For `OUTCOME_UNKNOWN`, query QuickBooks by the stored stable reference before permitting another write. If no matching journal exists, record `NOT_FOUND` before releasing the day for retry.
+5. For `POSSIBLE_DUPLICATE`, require the user to adopt an accounting-equivalent journal or explicitly dismiss it.
+6. For `EXTERNAL_CHANGE`, stop automation. Do not recreate, edit or delete the external journal.
+7. For `CORRECTION_PARTIAL`, preserve the confirmed reversal and resume only the missing replacement. A newer source revision remains queued for a later correction.
+8. For `ENTITLEMENT_BLOCKED`, retain the persisted day and its `blockedFromStatus`; restoring entitlement resumes that prior workflow state.
 
 ## Never do
 
@@ -34,4 +36,4 @@ npm run gate
 
 ## Recovery objectives
 
-Production operations target encrypted daily backups, RPO 24 hours and RTO 8 hours. A restore drill must prove that posting state and attempts survive restart before production activation.
+Production operations target encrypted daily backups, RPO 24 hours and RTO 8 hours. A restore drill must prove that posting state and attempts survive restart before production activation. The drill must cover process interruption both before and after the QuickBooks commit.

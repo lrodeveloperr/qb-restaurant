@@ -129,7 +129,71 @@ test('T-CORRECTION: later source revisions use new correction references', () =>
   const correctedAgain = engine.correct(day.id);
   assert.equal(correctedAgain.correctionVersion, 2);
   assert.equal(correctedAgain.journal.docNumber.endsWith('04'), true);
+  assert.equal(correctedAgain.journal.kind, 'REPLACEMENT');
   assert.equal(quickBooks.writeCount, 5);
+  store.close();
+});
+
+test('T-REVISION-QUEUE: a newer pending revision replaces the prior one without a state error', () => {
+  const { source, engine, quickBooks, store } = setup();
+  const day = engine.ingest(source);
+  engine.post(day.id);
+  const revisionTwo = fixture('us-day-changed.json');
+  engine.ingest(revisionTwo);
+  const revisionThree = structuredClone(revisionTwo);
+  revisionThree.sourceVersion = 'toast-close-3';
+  revisionThree.categories.food_sales += 500;
+  revisionThree.categories.card += 500;
+  const pending = engine.ingest(revisionThree);
+  assert.equal(pending.status, DayStatus.CORRECTION_REQUIRED);
+  assert.equal(pending.pendingSource.sourceVersion, 'toast-close-3');
+  const corrected = engine.correct(day.id);
+  assert.equal(corrected.status, DayStatus.CORRECTED);
+  assert.equal(corrected.source.sourceVersion, 'toast-close-3');
+  assert.equal(quickBooks.writeCount, 3);
+  store.close();
+});
+
+test('T-REVISION-QUEUE: an in-flight correction finishes its snapshot before the queued revision', () => {
+  const { source, engine, quickBooks, store } = setup();
+  const day = engine.ingest(source);
+  engine.post(day.id);
+  const revisionTwo = fixture('us-day-changed.json');
+  engine.ingest(revisionTwo);
+  const partial = engine.correct(day.id, { replacementBehavior: WriteBehavior.TIMEOUT_BEFORE_COMMIT });
+  assert.equal(partial.status, DayStatus.CORRECTION_PARTIAL);
+  const revisionThree = structuredClone(revisionTwo);
+  revisionThree.sourceVersion = 'toast-close-3';
+  revisionThree.categories.food_sales += 500;
+  revisionThree.categories.card += 500;
+  const queued = engine.ingest(revisionThree);
+  assert.equal(queued.status, DayStatus.CORRECTION_PARTIAL);
+  assert.equal(queued.pendingSource.sourceVersion, 'toast-close-2');
+  assert.equal(queued.queuedSource.sourceVersion, 'toast-close-3');
+  const next = engine.correct(day.id);
+  assert.equal(next.status, DayStatus.CORRECTION_REQUIRED);
+  assert.equal(next.source.sourceVersion, 'toast-close-2');
+  assert.equal(next.pendingSource.sourceVersion, 'toast-close-3');
+  const completed = engine.correct(day.id);
+  assert.equal(completed.status, DayStatus.CORRECTED);
+  assert.equal(completed.source.sourceVersion, 'toast-close-3');
+  assert.equal(completed.journal.kind, 'REPLACEMENT');
+  assert.equal(quickBooks.writeCount, 5);
+  store.close();
+});
+
+test('T-ENTITLEMENT-PERSISTENCE: a denied write persists its state and resumes after payment', () => {
+  const { source, engine, quickBooks, store } = setup({ paid: false });
+  const day = engine.ingest(source);
+  const blocked = engine.post(day.id);
+  assert.equal(blocked.status, DayStatus.ENTITLEMENT_BLOCKED);
+  assert.equal(blocked.blockedFromStatus, DayStatus.READY_FOR_REVIEW);
+  assert.equal(blocked.errorCode, 'ENTITLEMENT_BLOCKED');
+  assert.equal(store.getDay(day.id).status, DayStatus.ENTITLEMENT_BLOCKED);
+  assert.equal(quickBooks.writeCount, 0);
+  store.putEntitlement(source.workspaceId, { status: 'PAID', syncPaused: false });
+  assert.equal(engine.post(day.id).status, DayStatus.POSTED);
+  assert.equal(quickBooks.writeCount, 1);
   store.close();
 });
 

@@ -41,10 +41,12 @@
 - `TxnDate` equals the Toast business date.
 - The stable `DocNumber` is exactly 21 or fewer characters: `RSQ` + 8-character scope hash + `YYYYMMDD` + 2-digit sequence.
 - `PrivateNote` contains the complete workspace/realm/location/date/correction identity.
+- The 8-character scope hash is registered per workspace; a colliding location is rejected before it can post.
 - QuickBooks Location/Department is transaction-level; Class is line-level when configured.
 - An exact app reference is a hard duplicate and is adopted into the local ledger.
 - An unreferenced journal with the same date, location dimension, accounts, directions and amounts is `POSSIBLE_DUPLICATE`; the user must adopt or dismiss it.
-- Identical retry attempts reuse the same idempotency key and payload.
+- Every external write first claims a durable local attempt. Identical retry attempts reuse the same idempotency key as the QuickBooks `requestid` and reuse the same payload.
+- A process-interrupted `POSTING` row is reconciled by `DocNumber` at startup before it may become retryable.
 
 ## Corrections and external changes
 
@@ -52,6 +54,7 @@
 - The original journal must still match the stored snapshot before correction.
 - An externally edited, voided or deleted journal becomes `EXTERNAL_CHANGE`; no automatic recreate, reversal or replacement occurs.
 - If a reversal succeeds and replacement fails, retry resumes from the durable partial state and never repeats the reversal.
+- A newer revision replaces a correction that has not started. Once correction writes begin, the active source snapshot is immutable and a newer revision queues for the next correction.
 
 ## Trial and billing
 
@@ -61,6 +64,7 @@
 - A billable location is one with scheduled sync enabled. Adding a location is prorated; removing it ends billing at renewal.
 - `Pause sync` stops retrieval and posting immediately but does not cancel billing.
 - A failed payment has a seven-day grace period; after that, new posting stops while history remains readable.
+- A denied write persists `ENTITLEMENT_BLOCKED` with the prior workflow state so restored entitlement resumes safely.
 - Cancellation leaves history/export available for 30 days.
 
 ## Scheduling and alerts

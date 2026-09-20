@@ -18,7 +18,7 @@ export function validateMapping(mapping) {
   return mapping;
 }
 
-export function buildJournal(source, mapping, { sequence = 0, reverse = false } = {}) {
+export function buildJournal(source, mapping, { sequence = 0, reverse = false, kind } = {}) {
   validateMapping(mapping);
   const lines = [];
   const unmapped = [];
@@ -53,7 +53,7 @@ export function buildJournal(source, mapping, { sequence = 0, reverse = false } 
 
   const journal = {
     schemaVersion: 1,
-    kind: reverse ? 'REVERSAL' : sequence === 2 ? 'REPLACEMENT' : 'ORIGINAL',
+    kind: kind ?? (reverse ? 'REVERSAL' : sequence === 0 ? 'ORIGINAL' : 'REPLACEMENT'),
     docNumber: makeDocNumber({ ...source, sequence }),
     privateNote: makePrivateNote({ ...source, sequence }),
     txnDate: source.businessDate,

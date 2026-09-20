@@ -13,15 +13,36 @@ function rows(text) {
   let row = [];
   let cell = '';
   let quoted = false;
+  let quoteClosed = false;
   for (let index = 0; index < text.length; index += 1) {
     const character = text[index];
     if (quoted) {
       if (character === '"' && text[index + 1] === '"') {
         cell += '"';
         index += 1;
-      } else if (character === '"') quoted = false;
+      } else if (character === '"') {
+        quoted = false;
+        quoteClosed = true;
+      }
       else cell += character;
+    } else if (quoteClosed) {
+      if (character === ',') {
+        row.push(cell);
+        cell = '';
+        quoteClosed = false;
+      } else if (character === '\n') {
+        row.push(cell);
+        output.push(row);
+        row = [];
+        cell = '';
+        quoteClosed = false;
+      } else if (character === '\r' && (text[index + 1] === '\n' || index + 1 === text.length)) {
+        // CR in CRLF is consumed by the following LF; terminal CR is accepted.
+      } else {
+        invariant(false, 'MALFORMED_CSV', 'Only a delimiter or line ending may follow a closing quote.', { index });
+      }
     } else if (character === '"' && cell === '') quoted = true;
+    else if (character === '"') invariant(false, 'MALFORMED_CSV', 'A quote inside an unquoted field must be escaped.', { index });
     else if (character === ',') {
       row.push(cell);
       cell = '';
@@ -30,7 +51,9 @@ function rows(text) {
       output.push(row);
       row = [];
       cell = '';
-    } else if (character !== '\r') cell += character;
+    } else if (character === '\r') {
+      invariant(text[index + 1] === '\n' || index + 1 === text.length, 'MALFORMED_CSV', 'A carriage return must be followed by a line feed.', { index });
+    } else cell += character;
   }
   invariant(!quoted, 'MALFORMED_CSV', 'CSV contains an unterminated quoted field.');
   if (cell || row.length) {
@@ -38,6 +61,18 @@ function rows(text) {
     output.push(row);
   }
   return output;
+}
+
+function decodeFormulaSafe(value) {
+  if (value.startsWith("''")) return value.slice(1);
+  return /^'[=+\-@\t\r]/.test(value) ? value.slice(1) : value;
+}
+
+function csvCell(value, { formulaSafe = false } = {}) {
+  let text = String(value);
+  if (formulaSafe && text.startsWith("'")) text = `'${text}`;
+  else if (formulaSafe && /^[=+\-@\t\r]/.test(text)) text = `'${text}`;
+  return /[",\n\r]/.test(text) ? `"${text.replaceAll('"', '""')}"` : text;
 }
 
 export function parseCsvSource(input) {
@@ -56,7 +91,7 @@ export function parseCsvSource(input) {
   for (let rowIndex = 1; rowIndex < parsed.length; rowIndex += 1) {
     const values = parsed[rowIndex];
     invariant(values.length === CSV_HEADER.length, 'MALFORMED_CSV', 'Every CSV row must have exactly 12 fields.', { row: rowIndex + 1, fields: values.length });
-    const record = Object.fromEntries(CSV_HEADER.map((key, index) => [key, values[index]]));
+    const record = Object.fromEntries(CSV_HEADER.map((key, index) => [key, index < 11 ? decodeFormulaSafe(values[index]) : values[index]]));
     for (const field of baseColumns) {
       if (rowIndex === 1) base[field] = record[field];
       else invariant(base[field] === record[field], 'MIXED_CSV_IDENTITY', 'A CSV upload may contain only one location-day.', { row: rowIndex + 1, field });
@@ -84,6 +119,7 @@ export function parseCsvSource(input) {
 export function toCsvSource(source) {
   const common = [1, source.workspaceId, source.realmId, source.restaurantId, source.locationId,
     source.businessDate, source.timezone, source.country, source.currency, source.sourceVersion];
-  const data = Object.entries(source.categories).map(([category, amount]) => [...common, category, amount].join(','));
+  const data = Object.entries(source.categories).map(([category, amount]) => [...common, category, amount]
+    .map((value, index) => csvCell(value, { formulaSafe: index < 11 })).join(','));
   return `${CSV_HEADER.join(',')}\n${data.join('\n')}\n`;
 }

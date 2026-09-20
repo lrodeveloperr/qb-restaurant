@@ -8,6 +8,11 @@ const root = new URL('..', import.meta.url).pathname;
 const requirements = JSON.parse(readFileSync(join(root, 'contracts', 'requirements.json'), 'utf8'));
 const manifest = JSON.parse(readFileSync(join(root, 'contracts', 'gate-manifest.json'), 'utf8'));
 const findings = [];
+const runtimeMajor = Number(process.versions.node.split('.')[0]);
+if (!Number.isInteger(runtimeMajor) || runtimeMajor < 24) findings.push(`runtime: Node.js 24 or later is required; found ${process.versions.node}`);
+if (process.env.npm_package_engines_node && process.env.npm_package_engines_node !== '>=24.0.0') {
+  findings.push(`runtime: package engines must remain >=24.0.0; found ${process.env.npm_package_engines_node}`);
+}
 
 function unique(items, label) {
   const seen = new Set();
@@ -53,6 +58,7 @@ const output = {
   testRecordCount: manifest.tests.length,
   externalGateCount: manifest.external_gates.length,
   localeCoveragePercent: validateCatalogs().length === 0 ? 100 : 0,
+  runtime: process.versions.node,
   findings,
 };
 console.log(JSON.stringify(output, null, 2));
