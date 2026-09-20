@@ -35,6 +35,8 @@
     {"id":"EXT-CA-FIXTURE","status":"BLOCKED_EXTERNAL","description":"Anonymized real Quebec/CAD Toast Sales Summary CSV with GST/QST and Lateef-approved journal."},
     {"id":"EXT-QB-US-SANDBOX","status":"BLOCKED_EXTERNAL","description":"Successful locked-payload write and recovery test in a US/USD QBO sandbox."},
     {"id":"EXT-QB-CA-SANDBOX","status":"BLOCKED_EXTERNAL","description":"Successful locked-payload write and recovery test in a CA/CAD QBO sandbox."},
+    {"id":"EXT-PRODUCTION-SHELL","status":"BLOCKED_EXTERNAL","description":"Deployed HTTPS shell with authentication, OAuth state, encrypted token custody, upload deletion, checkout, email, monitoring and backups."},
+    {"id":"EXT-SUBMISSION-OWNER-INPUTS","status":"BLOCKED_EXTERNAL","description":"Production domains, legal/support/disconnect URLs, Intuit production app credentials, reviewer access and approved listing assets."},
     {"id":"EXT-INDEPENDENT-REVIEW","status":"BLOCKED_EXTERNAL","description":"Fresh external verifier reviews the immutable candidate bundle."},
     {"id":"EXT-USER-HARNESS","status":"BLOCKED_EXTERNAL","description":"User completes the normal, failure, correction, billing and locale harness scenarios."}
   ],
