@@ -197,6 +197,28 @@ test('T-ENTITLEMENT-PERSISTENCE: a denied write persists its state and resumes a
   store.close();
 });
 
+test('T-ENTITLEMENT-PERSISTENCE: a revision cannot erase a blocked uncertain write', () => {
+  const { source, engine, quickBooks, store } = setup({ paid: false });
+  const day = engine.ingest(source);
+  store.transition(day.id, DayStatus.OUTCOME_UNKNOWN, { errorCode: 'OUTCOME_UNKNOWN' });
+  const blocked = store.transition(day.id, DayStatus.ENTITLEMENT_BLOCKED, {
+    blockedFromStatus: DayStatus.OUTCOME_UNKNOWN, errorCode: 'ENTITLEMENT_BLOCKED',
+  });
+  assert.equal(blocked.status, DayStatus.ENTITLEMENT_BLOCKED);
+  assert.equal(blocked.blockedFromStatus, DayStatus.OUTCOME_UNKNOWN);
+  const revised = engine.ingest(fixture('us-day-changed.json'));
+  assert.equal(revised.status, DayStatus.ENTITLEMENT_BLOCKED);
+  assert.equal(revised.queuedSource.sourceVersion, 'toast-close-2');
+  assert.equal(revised.source.sourceVersion, 'toast-close-1');
+  store.putEntitlement(source.workspaceId, { status: 'PAID', syncPaused: false });
+  const posted = engine.post(day.id);
+  assert.equal(posted.status, DayStatus.CORRECTION_REQUIRED);
+  assert.equal(posted.pendingSource.sourceVersion, 'toast-close-2');
+  assert.equal(engine.correct(day.id).status, DayStatus.CORRECTED);
+  assert.equal(quickBooks.writeCount, 3);
+  store.close();
+});
+
 test('T-EXTERNAL-EDIT: edited original blocks automatic correction', () => {
   const { source, engine, quickBooks, store } = setup();
   const day = engine.ingest(source);

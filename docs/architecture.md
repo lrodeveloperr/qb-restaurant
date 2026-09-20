@@ -9,7 +9,7 @@ The accounting engine is an intentionally small synchronous command core. Extern
 3. `SyncEngine.ingest` binds the record to its workspace, realm and location and loads the approved mapping version.
 4. `buildJournal` produces immutable sorted lines, exact totals and stable QuickBooks references. It refuses unmapped, inactive or unbalanced input.
 5. `SyncEngine.post` checks entitlement and location state, searches QuickBooks for exact and equivalent records, atomically claims the durable attempt and writes at most once.
-6. An uncertain response or stale `POSTING` row is searched by stable reference before the day can return to a retryable state.
+6. An uncertain response or stale `POSTING` row is searched by stable reference before the day can return to a retryable state. A stale `CORRECTING` row becomes a resumable partial correction whose external writes are reconciled by their own stable references.
 7. A changed posted source becomes a correction. The engine verifies the stored QuickBooks snapshot, then creates versioned reversal and replacement entries. Revisions arriving during that correction queue behind its immutable source snapshot.
 
 ## Trust boundaries

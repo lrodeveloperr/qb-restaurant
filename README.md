@@ -45,7 +45,7 @@ Use `--locale en-US`, `en-CA`, `es-US` or `fr-CA` after a scenario command to ch
 - One workspace belongs to one QuickBooks realm.
 - A stable 21-character reference identifies every write.
 - Every write is claimed in the durable attempt ledger and uses a QuickBooks `requestid` plus a stable `DocNumber`.
-- Timed-out and process-interrupted writes are queried before retry, including stale `POSTING` rows recovered at startup.
+- Timed-out and process-interrupted writes are queried before retry, including stale `POSTING` and `CORRECTING` rows recovered at startup.
 - Colliding shortened reference scopes are rejected when a location is created.
 - An existing unreferenced equivalent journal blocks as a possible duplicate.
 - External edits or deletion block automated correction.

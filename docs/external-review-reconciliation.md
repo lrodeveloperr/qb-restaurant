@@ -5,7 +5,7 @@ This record maps the structural-integrity review to release `0.1.1` changes.
 | Finding | Disposition | Evidence |
 |---|---|---|
 | A second source revision could throw from `CORRECTION_REQUIRED` | Fixed | Unstarted corrections now replace their pending source; in-flight corrections retain their snapshot and queue the newer source. `T-REVISION-QUEUE` covers both paths. |
-| A process stop could strand `POSTING` | Fixed | Engine startup reconciles every durable `POSTING`/`OUTCOME_UNKNOWN` row by deterministic QuickBooks reference. `T-INTERRUPTED-WRITE` covers stops before and after external commit. |
+| A process stop could strand `POSTING` | Fixed and extended | Engine startup reconciles every durable `POSTING`/`OUTCOME_UNKNOWN` row by deterministic QuickBooks reference. The same recovery boundary now moves interrupted `CORRECTING` rows to resumable partial correction. `T-INTERRUPTED-WRITE` and `T-INTERRUPTED-CORRECTION` cover these crash windows. |
 | Correction 2+ replacements were labeled `ORIGINAL` | Fixed | Journal kind is explicit for correction writes; the second replacement is asserted as `REPLACEMENT`. |
 | `ENTITLEMENT_BLOCKED` was never persisted | Fixed | Denied posts/corrections persist the block and prior state, then restore that state when entitlement returns. |
 | The attempts table was write-only and the adapter contract assumed unsupported idempotency | Hardened; contract premise corrected | Attempts are now atomically claimed and consulted during posting/correction recovery. Intuit documents a caller-supplied, company-unique `requestid`; the production adapter contract now names it explicitly while retaining `DocNumber` reconciliation. |

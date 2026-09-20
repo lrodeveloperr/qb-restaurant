@@ -47,6 +47,9 @@ export class SyncEngine {
         queuedSource: existing.blockedFromStatus === DayStatus.CORRECTION_PARTIAL ? source : null,
       });
     }
+    if (existing?.status === DayStatus.ENTITLEMENT_BLOCKED && ORIGINAL_WRITE_IN_FLIGHT.has(existing.blockedFromStatus)) {
+      return this.store.transition(existing.id, DayStatus.ENTITLEMENT_BLOCKED, { queuedSource: source });
+    }
 
     const mapping = this.store.getMapping(source.locationId);
     if (!mapping) {
@@ -94,7 +97,11 @@ export class SyncEngine {
       if (restored.status === DayStatus.ENTITLEMENT_BLOCKED) return restored;
       day = restored;
     }
-    invariant(day.status === DayStatus.READY_FOR_REVIEW || day.status === DayStatus.OUTCOME_UNKNOWN || day.status === DayStatus.FAILED,
+    if (day.status === DayStatus.OUTCOME_UNKNOWN) {
+      const recovered = this.recover(day.id);
+      return recovered.status === DayStatus.READY_FOR_REVIEW ? this.post(recovered.id, { behavior }) : recovered;
+    }
+    invariant(day.status === DayStatus.READY_FOR_REVIEW || day.status === DayStatus.FAILED,
       'DAY_NOT_POSTABLE', 'Only a reviewed unposted day can be posted.', { status: day.status });
     const blocked = this.#persistEntitlementBlock(day);
     if (blocked) return blocked;
@@ -171,7 +178,13 @@ export class SyncEngine {
 
   recoverInterruptedWrites() {
     const recovered = [];
-    for (let day of this.store.listDaysByStatuses([DayStatus.POSTING, DayStatus.OUTCOME_UNKNOWN])) {
+    for (let day of this.store.listDaysByStatuses([DayStatus.POSTING, DayStatus.OUTCOME_UNKNOWN, DayStatus.CORRECTING])) {
+      if (day.status === DayStatus.CORRECTING) {
+        recovered.push(this.store.transition(day.id, DayStatus.CORRECTION_PARTIAL, {
+          errorCode: 'INTERRUPTED_CORRECTION', error: { code: 'INTERRUPTED_CORRECTION', message: 'The process stopped while a QuickBooks correction was in progress.' },
+        }));
+        continue;
+      }
       if (day.status === DayStatus.POSTING) {
         day = this.store.transition(day.id, DayStatus.OUTCOME_UNKNOWN, {
           errorCode: 'INTERRUPTED_WRITE', error: { code: 'INTERRUPTED_WRITE', message: 'The process stopped while a QuickBooks write was in progress.' },

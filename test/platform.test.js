@@ -15,6 +15,7 @@ import { SyncEngine } from '../src/domain/engine.js';
 import { makeIdempotencyKey } from '../src/domain/reference.js';
 import { sourceIdentity } from '../src/domain/normalize.js';
 import { DayStatus } from '../src/domain/state-machine.js';
+import { buildJournal } from '../src/domain/journal.js';
 import { fixture, setup } from './helpers.js';
 
 test('T-TRIAL: no-card trial lasts exactly 14 days and does not auto-convert', () => {
@@ -125,6 +126,26 @@ test('T-INTERRUPTED-WRITE: startup safely releases a POSTING row when no journal
   assert.equal(store.listAttempts(day.id).at(-1).outcome, 'NOT_FOUND');
   assert.equal(restarted.post(day.id).status, DayStatus.POSTED);
   assert.equal(quickBooks.writeCount, 1);
+  store.close();
+});
+
+test('T-INTERRUPTED-CORRECTION: startup preserves and resumes a correction write', () => {
+  const { source, mapping, store, quickBooks, engine } = setup();
+  const day = engine.ingest(source);
+  engine.post(day.id);
+  engine.ingest(fixture('us-day-changed.json'));
+  const correcting = store.transition(day.id, DayStatus.CORRECTING, { correctionVersion: 1 });
+  const reversal = buildJournal(correcting.source, mapping, { sequence: 1, reverse: true, kind: 'REVERSAL' });
+  const idempotencyKey = makeIdempotencyKey({ ...sourceIdentity(correcting.source), kind: 'REVERSAL', docNumber: reversal.docNumber });
+  store.claimAttempt({ dayId: day.id, idempotencyKey, docNumber: reversal.docNumber, kind: 'REVERSAL' });
+  quickBooks.createJournal(reversal, { idempotencyKey });
+
+  const restarted = new SyncEngine({ store, quickBooks });
+  assert.equal(store.getDay(day.id).status, DayStatus.CORRECTION_PARTIAL);
+  const completed = restarted.correct(day.id);
+  assert.equal(completed.status, DayStatus.CORRECTED);
+  assert.equal(completed.journal.kind, 'REPLACEMENT');
+  assert.equal(quickBooks.writeCount, 3);
   store.close();
 });
 

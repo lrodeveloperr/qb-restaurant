@@ -46,7 +46,7 @@
 - An exact app reference is a hard duplicate and is adopted into the local ledger.
 - An unreferenced journal with the same date, location dimension, accounts, directions and amounts is `POSSIBLE_DUPLICATE`; the user must adopt or dismiss it.
 - Every external write first claims a durable local attempt. Identical retry attempts reuse the same idempotency key as the QuickBooks `requestid` and reuse the same payload.
-- A process-interrupted `POSTING` row is reconciled by `DocNumber` at startup before it may become retryable.
+- A process-interrupted `POSTING` row is reconciled by `DocNumber` at startup before it may become retryable; interrupted `CORRECTING` rows become resumable partial corrections using their stable references.
 
 ## Corrections and external changes
 
